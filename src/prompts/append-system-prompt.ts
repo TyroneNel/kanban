@@ -190,10 +190,10 @@ Parameters:
 
 ## task create
 
-Purpose: create a new task in \`backlog\`, with optional plan mode and auto-review behavior.
+Purpose: create a new task in \`backlog\`, with optional plan mode, auto-review behavior, and per-task agent/model overrides.
 
 Command:
-\`${kanbanCommand} task create [--title "<text>"] --prompt "<text>" [--project-path <path>] [--base-ref <branch>] [--start-in-plan-mode <true|false>] [--auto-review-enabled <true|false>] [--auto-review-mode commit|pr]\`
+\`${kanbanCommand} task create [--title "<text>"] --prompt "<text>" [--project-path <path>] [--base-ref <branch>] [--start-in-plan-mode <true|false>] [--auto-review-enabled <true|false>] [--auto-review-mode commit|pr] [--agent-id <id>] [--cline-provider <id>] [--cline-model <id>] [--cline-reasoning-effort <level>]\`
 
 Parameters:
 - \`--title "<text>"\` optional task title. If omitted, Kanban derives one from the prompt.
@@ -203,13 +203,17 @@ Parameters:
 - \`--start-in-plan-mode <true|false>\` optional. Default false. Set true only when explicitly requested.
 - \`--auto-review-enabled <true|false>\` optional. Default false. Enables automatic action once task reaches review.
 - \`--auto-review-mode commit|pr\` optional auto-review action. Default \`commit\`.
+- \`--agent-id <id>\` optional per-task agent override: \`cline\` | \`claude\` | \`codex\` | \`droid\` | \`kiro\` | \`gemini\` | \`opencode\`. If omitted, the task inherits the workspace default agent.
+- \`--cline-provider <id>\` optional Cline provider override (e.g. \`anthropic\`, \`openai\`, \`cline\`). Only applies to Cline tasks.
+- \`--cline-model <id>\` optional Cline model override (e.g. \`claude-sonnet-4-20250514\`). Only applies to Cline tasks.
+- \`--cline-reasoning-effort <level>\` optional Cline reasoning effort override: \`low\` | \`medium\` | \`high\` | \`xhigh\`. Only applies to Cline tasks.
 
 ## task update
 
-Purpose: update an existing task, including prompt, base ref, plan mode, and auto-review behavior.
+Purpose: update an existing task, including prompt, base ref, plan mode, auto-review behavior, and per-task agent/model overrides.
 
 Command:
-\`${kanbanCommand} task update --task-id <task_id> [--title "<text>"] [--prompt "<text>"] [--project-path <path>] [--base-ref <branch>] [--start-in-plan-mode <true|false>] [--auto-review-enabled <true|false>] [--auto-review-mode commit|pr]\`
+\`${kanbanCommand} task update --task-id <task_id> [--title "<text>"] [--prompt "<text>"] [--project-path <path>] [--base-ref <branch>] [--start-in-plan-mode <true|false>] [--auto-review-enabled <true|false>] [--auto-review-mode commit|pr] [--agent-id <id>] [--cline-provider <id>] [--cline-model <id>] [--cline-reasoning-effort <level>]\`
 
 Parameters:
 - \`--task-id <task_id>\` required task ID.
@@ -220,6 +224,10 @@ Parameters:
 - \`--start-in-plan-mode <true|false>\` optional replacement of plan-mode behavior.
 - \`--auto-review-enabled <true|false>\` optional replacement of auto-review toggle. Set false to cancel pending automatic review actions.
 - \`--auto-review-mode commit|pr\` optional replacement auto-review action.
+- \`--agent-id <id>\` optional replacement per-task agent override. Use \`default\` to clear the override and inherit the workspace default agent.
+- \`--cline-provider <id>\` optional replacement Cline provider override. Use \`default\` to clear.
+- \`--cline-model <id>\` optional replacement Cline model override. Use \`default\` to clear.
+- \`--cline-reasoning-effort <level>\` optional replacement Cline reasoning effort override: \`default\` | \`low\` | \`medium\` | \`high\` | \`xhigh\`. Use \`inherit\` to clear.
 
 Notes:
 - Provide at least one field to change in addition to \`--task-id\`.
@@ -295,6 +303,36 @@ Command:
 Parameters:
 - \`--task-id <task_id>\` required task ID.
 - \`--project-path <path>\` optional workspace path. If not already registered in Kanban, it is auto-added for git repos.
+
+# Per-Task Agent and Model Overrides
+
+Tasks can override the workspace default agent, and Cline tasks can additionally override provider, model, and reasoning effort. When the user names a specific agent or model for a task, set it on the card with the flags above instead of inheriting the workspace default.
+
+Map natural language to flags like this:
+
+- "Claude Code" or "Claude" → \`--agent-id claude\`
+- "Codex" → \`--agent-id codex\`
+- "Gemini" → \`--agent-id gemini\`
+- "OpenCode" → \`--agent-id opencode\`
+- "Droid" → \`--agent-id droid\`
+- "Kiro" → \`--agent-id kiro\`
+- "Cline" or a model request on Cline → \`--agent-id cline\` plus \`--cline-provider\` / \`--cline-model\` as needed. Common Cline providers: "Cline with Claude Sonnet" → \`--cline-provider anthropic --cline-model claude-sonnet-4-20250514\`, "Cline with Gemini" → \`--cline-provider gemini\`, "Cline with Kimi" → \`--cline-provider moonshot --cline-model kimi-k2-0905-preview\`.
+- "Claude Code Sonnet" → \`--agent-id claude\`. Model overrides are only supported for Cline tasks, so a model name on a non-Cline agent maps to the agent only.
+
+Examples:
+
+\`\`\`
+${kanbanCommand} task create --prompt "Write auth middleware" --agent-id claude
+${kanbanCommand} task create --prompt "Write tests" --agent-id cline --cline-provider anthropic --cline-model claude-sonnet-4-20250514
+${kanbanCommand} task update --task-id <task_id> --agent-id codex
+${kanbanCommand} task update --task-id <task_id> --cline-model claude-sonnet-4-20250514
+\`\`\`
+
+Notes:
+- \`--cline-provider\`, \`--cline-model\`, and \`--cline-reasoning-effort\` are ignored when \`--agent-id\` is a non-Cline agent. Only use them for Cline tasks.
+- Omit all override flags to inherit the workspace default agent and model.
+- On \`task update\`, use \`--agent-id default\` to clear a per-task agent override, \`--cline-provider default\` / \`--cline-model default\` to clear Cline overrides, and \`--cline-reasoning-effort inherit\` to clear the reasoning effort override.
+- Model IDs must be exact Cline model IDs. If you are unsure which model IDs are available, ask the user which provider and model to use instead of guessing.
 
 # Workflow Notes
 
