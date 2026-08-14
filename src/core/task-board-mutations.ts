@@ -8,6 +8,7 @@ import type {
 	RuntimeTaskAutoReviewMode,
 	RuntimeTaskImage,
 } from "./api-contract";
+import { cloneRuntimeTaskAgentSettings } from "./task-agent-settings";
 import { createUniqueTaskId } from "./task-id";
 import { resolveTaskTitle } from "./task-title";
 
@@ -46,19 +47,6 @@ function normalizeTaskAutoReviewMode(value: RuntimeTaskAutoReviewMode | null | u
 // Copy image metadata so board tasks do not retain caller-owned array or object references.
 function cloneTaskImages(images?: RuntimeTaskImage[]): RuntimeTaskImage[] | undefined {
 	return images && images.length > 0 ? images.map((image) => ({ ...image })) : undefined;
-}
-
-function cloneTaskAgentSettings(settings?: RuntimeTaskAgentSettings | null): RuntimeTaskAgentSettings | undefined {
-	if (settings === undefined || settings === null) {
-		return undefined;
-	}
-	const providerId = settings.providerId?.trim();
-	const modelId = settings.modelId?.trim();
-	return {
-		...(providerId ? { providerId } : {}),
-		...(modelId ? { modelId } : {}),
-		...(settings.reasoningEffort ? { reasoningEffort: settings.reasoningEffort } : {}),
-	};
 }
 
 export interface RuntimeCreateTaskResult {
@@ -308,7 +296,9 @@ export function addTaskToColumn(
 		autoReviewMode: normalizeTaskAutoReviewMode(input.autoReviewMode),
 		images: cloneTaskImages(input.images),
 		...(input.agentId ? { agentId: input.agentId } : {}),
-		...(input.agentSettings !== undefined ? { agentSettings: cloneTaskAgentSettings(input.agentSettings) } : {}),
+		...(input.agentSettings !== undefined
+			? { agentSettings: cloneRuntimeTaskAgentSettings(input.agentSettings) }
+			: {}),
 		baseRef,
 		createdAt: now,
 		updatedAt: now,
@@ -626,10 +616,10 @@ export function updateTask(
 				agentId: input.agentId === undefined ? card.agentId : (input.agentId ?? undefined),
 				agentSettings:
 					input.agentSettings === undefined
-						? cloneTaskAgentSettings(card.agentSettings)
+						? cloneRuntimeTaskAgentSettings(card.agentSettings)
 						: input.agentSettings === null
 							? undefined
-							: cloneTaskAgentSettings(input.agentSettings),
+							: cloneRuntimeTaskAgentSettings(input.agentSettings),
 				baseRef,
 				updatedAt: now,
 			};

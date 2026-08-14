@@ -1,7 +1,7 @@
 // Owns the live SDK session host plus taskId to sessionId bindings.
 // This is the runtime-facing layer for starting, looking up, resuming, and
 // stopping native Cline sessions without exposing SDK details upstream.
-import type { RuntimeTaskImage, RuntimeTaskSessionMode } from "../core/api-contract";
+import type { RuntimeClineReasoningEffort, RuntimeTaskImage, RuntimeTaskSessionMode } from "../core/api-contract";
 import { extractClineSessionId } from "./cline-event-adapter";
 import {
 	type ClineMcpRuntimeService,
@@ -77,8 +77,9 @@ export interface StartClineSessionRuntimeRequest {
 	mode?: RuntimeTaskSessionMode;
 	apiKey?: string | null;
 	baseUrl?: string | null;
-	// Opaque per-task override; passed verbatim to the Cline SDK, which validates it.
-	reasoningEffort?: string | null;
+	// Per-task override in the narrow Cline effort vocabulary; null means
+	// "explicitly cleared to the model default".
+	reasoningEffort?: RuntimeClineReasoningEffort | null;
 	systemPrompt: string;
 	userInstructionService?: ClineSdkUserInstructionService;
 	requestToolApproval?: (request: ClineSdkToolApprovalRequest) => Promise<ClineSdkToolApprovalResult>;
@@ -215,9 +216,7 @@ export class InMemoryClineSessionRuntime implements ClineSessionRuntime {
 					reasoningEffort:
 						request.reasoningEffort === null
 							? ("none" as ClineSdkStartSessionInput["config"]["reasoningEffort"])
-							: ((request.reasoningEffort ?? undefined) as
-									| ClineSdkStartSessionInput["config"]["reasoningEffort"]
-									| undefined),
+							: request.reasoningEffort,
 					cwd: request.cwd,
 					mode: resolvedMode,
 					enableTools: true,

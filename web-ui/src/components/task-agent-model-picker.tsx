@@ -1,5 +1,6 @@
 import * as Collapsible from "@radix-ui/react-collapsible";
 import { getRuntimeAgentCatalogEntry, getRuntimeLaunchSupportedAgentCatalog } from "@runtime-agent-catalog";
+import { cloneRuntimeTaskAgentSettings, parseRuntimeClineReasoningEffort } from "@runtime-task-agent-settings";
 import { ChevronDown } from "lucide-react";
 import type { ReactElement } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -207,22 +208,24 @@ export function useTaskAgentModelPicker({
 	};
 }
 
-function cloneTaskAgentSettings(settings?: RuntimeTaskAgentSettings): RuntimeTaskAgentSettings | undefined {
-	if (settings === undefined) {
-		return undefined;
-	}
-	const providerId = settings.providerId?.trim();
-	const modelId = settings.modelId?.trim();
-	return {
-		...(providerId ? { providerId } : {}),
-		...(modelId ? { modelId } : {}),
-		...(settings.reasoningEffort ? { reasoningEffort: settings.reasoningEffort } : {}),
-	};
-}
-
 // ---------------------------------------------------------------------------
 // Component: renders Agent, Cline provider, and Cline model pickers
 // ---------------------------------------------------------------------------
+
+// After mutating a settings clone, decide whether to keep it or clear the
+// override entirely: a marker object ({}) survives only when an empty
+// override was already in place (Cline treats object presence as the marker).
+function resolveAgentSettingsOrClear(
+	nextSettings: RuntimeTaskAgentSettings,
+	preserveEmptyOverride: boolean,
+): RuntimeTaskAgentSettings | undefined {
+	const hasValues = Boolean(nextSettings.providerId || nextSettings.modelId || nextSettings.reasoningEffort);
+	return hasValues || preserveEmptyOverride ? nextSettings : undefined;
+}
+
+function shouldPreserveEmptyOverride(currentSettings: RuntimeTaskAgentSettings | undefined): boolean {
+	return currentSettings !== undefined && Object.keys(currentSettings).length === 0;
+}
 
 export function TaskAgentModelPicker({
 	agentId,
@@ -269,7 +272,7 @@ export function TaskAgentModelPicker({
 
 	const updateTaskAgentSettings = useCallback(
 		(updater: (current: RuntimeTaskAgentSettings | undefined) => RuntimeTaskAgentSettings | undefined) => {
-			onAgentSettingsChange?.(updater(cloneTaskAgentSettings(agentSettings)));
+			onAgentSettingsChange?.(updater(cloneRuntimeTaskAgentSettings(agentSettings)));
 		},
 		[agentSettings, onAgentSettingsChange],
 	);
@@ -299,19 +302,13 @@ export function TaskAgentModelPicker({
 				if (currentSettings === undefined && !value) {
 					return undefined;
 				}
-				const nextSettings = cloneTaskAgentSettings(currentSettings) ?? {};
+				const nextSettings = cloneRuntimeTaskAgentSettings(currentSettings) ?? {};
 				if (value) {
 					nextSettings[field] = value;
 				} else {
 					delete nextSettings[field];
 				}
-				const preserveEmptyOverride = currentSettings !== undefined && Object.keys(currentSettings).length === 0;
-				return nextSettings.providerId ||
-					nextSettings.modelId ||
-					nextSettings.reasoningEffort ||
-					preserveEmptyOverride
-					? nextSettings
-					: undefined;
+				return resolveAgentSettingsOrClear(nextSettings, shouldPreserveEmptyOverride(currentSettings));
 			});
 		},
 		[updateTaskAgentSettings],
@@ -333,21 +330,18 @@ export function TaskAgentModelPicker({
 		(nextReasoningEffort: string) => {
 			setReasoningEffort(nextReasoningEffort);
 			updateTaskAgentSettings((currentSettings) => {
-				const nextSettings = cloneTaskAgentSettings(currentSettings) ?? {};
+				const nextSettings = cloneRuntimeTaskAgentSettings(currentSettings) ?? {};
 				if (nextReasoningEffort) {
 					nextSettings.reasoningEffort = nextReasoningEffort;
 					return nextSettings;
 				}
 				delete nextSettings.reasoningEffort;
-				if (
-					nextSettings.providerId ||
-					nextSettings.modelId ||
-					currentSettings !== undefined ||
-					Boolean(defaultReasoningEffort)
-				) {
-					return nextSettings;
-				}
-				return undefined;
+				// Clearing effort keeps the override marker when the object exists at
+				// all (or a default effort is still in play) so the clear is explicit.
+				return resolveAgentSettingsOrClear(
+					nextSettings,
+					currentSettings !== undefined || Boolean(defaultReasoningEffort),
+				);
 			});
 		},
 		[defaultReasoningEffort, updateTaskAgentSettings],
@@ -471,16 +465,13 @@ export function TaskAgentModelPicker({
 		if (!modelExists) {
 			const firstRealModel = modelPickerOptions.options.find((opt) => opt.value !== "");
 			updateTaskAgentSettings((currentSettings) => {
-				const nextSettings = cloneTaskAgentSettings(currentSettings) ?? {};
+				const nextSettings = cloneRuntimeTaskAgentSettings(currentSettings) ?? {};
 				if (firstRealModel?.value) {
 					nextSettings.modelId = firstRealModel.value;
 					return nextSettings;
 				}
 				delete nextSettings.modelId;
-				const preserveEmptyOverride = currentSettings !== undefined && Object.keys(currentSettings).length === 0;
-				return nextSettings.providerId || nextSettings.reasoningEffort || preserveEmptyOverride
-					? nextSettings
-					: undefined;
+				return resolveAgentSettingsOrClear(nextSettings, shouldPreserveEmptyOverride(currentSettings));
 			});
 		}
 	}, [clineModelId, isLoadingModels, modelPickerOptions.options, updateTaskAgentSettings]);
@@ -515,19 +506,23 @@ export function TaskAgentModelPicker({
 										setReasoningEffort("");
 									}
 									// Keep model/effort across agent switches; only clear the provider
-									// when the next effective agent never reads one (not cline/opencode).
+									// when the next effective agent has no provider mechanism.
 									const nextEffectiveAgentId = value ? (value as RuntimeAgentId) : (defaultAgentId ?? null);
-									if (nextEffectiveAgentId !== "cline" && nextEffectiveAgentId !== "opencode") {
+									const nextProviderMechanism = nextEffectiveAgentId
+										? (getRuntimeAgentCatalogEntry(nextEffectiveAgentId)?.capabilities.providerOverride ??
+											"none")
+										: "none";
+									if (nextProviderMechanism === "none") {
 										updateTaskAgentSettings((currentSettings) => {
 											if (currentSettings === undefined) {
 												return undefined;
 											}
-											const nextSettings = cloneTaskAgentSettings(currentSettings) ?? {};
+											const nextSettings = cloneRuntimeTaskAgentSettings(currentSettings) ?? {};
 											delete nextSettings.providerId;
-											const preserveEmptyOverride = Object.keys(currentSettings).length === 0;
-											return nextSettings.modelId || nextSettings.reasoningEffort || preserveEmptyOverride
-												? nextSettings
-												: undefined;
+											return resolveAgentSettingsOrClear(
+												nextSettings,
+												shouldPreserveEmptyOverride(currentSettings),
+											);
 										});
 									}
 								}}
@@ -555,7 +550,7 @@ export function TaskAgentModelPicker({
 													? providerDefaultModels[newProviderId]
 													: undefined;
 											updateTaskAgentSettings((currentSettings) => {
-												const nextSettings = cloneTaskAgentSettings(currentSettings) ?? {};
+												const nextSettings = cloneRuntimeTaskAgentSettings(currentSettings) ?? {};
 												if (newProviderId) {
 													nextSettings.providerId = newProviderId;
 												} else {
@@ -567,12 +562,10 @@ export function TaskAgentModelPicker({
 													delete nextSettings.modelId;
 												}
 												delete nextSettings.reasoningEffort;
-												const preserveEmptyOverride =
-													newProviderId !== undefined ||
-													(currentSettings !== undefined && Object.keys(currentSettings).length === 0);
-												return nextSettings.providerId || nextSettings.modelId || preserveEmptyOverride
-													? nextSettings
-													: undefined;
+												return resolveAgentSettingsOrClear(
+													nextSettings,
+													newProviderId !== undefined || shouldPreserveEmptyOverride(currentSettings),
+												);
 											});
 											setReasoningEffort(
 												newProviderId ||
@@ -604,7 +597,7 @@ export function TaskAgentModelPicker({
 											selectedModelButtonText={selectedModelButtonText}
 											onSelectModel={(value) => {
 												updateTaskAgentSettings((currentSettings) => {
-													const nextSettings = cloneTaskAgentSettings(currentSettings) ?? {};
+													const nextSettings = cloneRuntimeTaskAgentSettings(currentSettings) ?? {};
 													if (value) {
 														nextSettings.modelId = value;
 													} else {
@@ -613,14 +606,10 @@ export function TaskAgentModelPicker({
 													if (!value || !reasoningEnabledModelIdSet.has(value)) {
 														delete nextSettings.reasoningEffort;
 													}
-													const preserveEmptyOverride =
-														currentSettings !== undefined && Object.keys(currentSettings).length === 0;
-													return nextSettings.providerId ||
-														nextSettings.modelId ||
-														nextSettings.reasoningEffort ||
-														preserveEmptyOverride
-														? nextSettings
-														: undefined;
+													return resolveAgentSettingsOrClear(
+														nextSettings,
+														shouldPreserveEmptyOverride(currentSettings),
+													);
 												});
 												if (!value && !clineProviderId) {
 													setReasoningEffort(
@@ -638,7 +627,7 @@ export function TaskAgentModelPicker({
 											defaultOptionSupportsReasoningEffort={
 												!clineModelId && selectedModelSupportsReasoningEffort
 											}
-											selectedReasoningEffort={reasoningEffort as RuntimeClineReasoningEffort | ""}
+											selectedReasoningEffort={parseRuntimeClineReasoningEffort(reasoningEffort) ?? ""}
 											onSelectReasoningEffort={(nextReasoningEffort) =>
 												setReasoningEffortWithOverride(nextReasoningEffort)
 											}

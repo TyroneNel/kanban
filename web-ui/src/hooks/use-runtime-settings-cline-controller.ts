@@ -1,6 +1,8 @@
 // Owns the Cline-specific settings state machine inside the settings dialog.
 // It loads provider data, drives model selection, saves settings, and runs
 // OAuth login flows so the dialog component can stay presentation-focused.
+
+import { parseRuntimeClineReasoningEffort } from "@runtime-task-agent-settings";
 import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getRuntimeClineProviderSettings } from "@/runtime/native-agent";
 import {
@@ -21,7 +23,6 @@ import type {
 	RuntimeClineProviderCatalogItem,
 	RuntimeClineProviderModel,
 	RuntimeClineProviderSettings,
-	RuntimeClineReasoningEffort,
 	RuntimeConfigResponse,
 	RuntimeTaskAgentSettings,
 } from "@/runtime/types";
@@ -244,7 +245,7 @@ export function useRuntimeSettingsClineController(
 		effectiveProviderSettings?.baseUrl,
 	);
 	const initialReasoningEffort = hasTaskAgentSettingsOverride
-		? (taskAgentSettings?.reasoningEffort ?? "")
+		? (parseRuntimeClineReasoningEffort(taskAgentSettings?.reasoningEffort) ?? "")
 		: (effectiveProviderSettings?.reasoningEffort ?? "");
 	const normalizedProviderId = providerId.trim().toLowerCase();
 	const managedOauthProvider = toManagedClineOauthProvider(normalizedProviderId);
@@ -262,7 +263,7 @@ export function useRuntimeSettingsClineController(
 			providerId: managedOauthProvider === null ? providerId.trim() || null : null,
 			modelId: modelId.trim() || null,
 			baseUrl: managedOauthProvider === null ? baseUrl.trim() || null : null,
-			reasoningEffort: (reasoningEffort || null) as RuntimeClineReasoningEffort | null,
+			reasoningEffort: parseRuntimeClineReasoningEffort(reasoningEffort),
 			apiKeyConfigured: managedOauthProvider === null ? baseSettings.apiKeyConfigured : false,
 			oauthProvider: managedOauthProvider,
 			oauthAccessTokenConfigured: isSelectedManagedOauthProvider ? baseSettings.oauthAccessTokenConfigured : false,
@@ -341,7 +342,7 @@ export function useRuntimeSettingsClineController(
 		setRegion("");
 		setReasoningEffort(
 			hasTaskAgentSettingsOverride
-				? (taskAgentSettings?.reasoningEffort ?? "")
+				? (parseRuntimeClineReasoningEffort(taskAgentSettings?.reasoningEffort) ?? "")
 				: (configProviderSettings.reasoningEffort ?? ""),
 		);
 		setAwsAccessKey("");
@@ -552,7 +553,7 @@ export function useRuntimeSettingsClineController(
 					providerId: trimmedProviderId,
 					modelId: trimmedModelId,
 					baseUrl: trimmedBaseUrl,
-					reasoningEffort: nextReasoningEffort as RuntimeClineReasoningEffort | null,
+					reasoningEffort: parseRuntimeClineReasoningEffort(nextReasoningEffort),
 					...(trimmedApiKey !== undefined ? { apiKey: trimmedApiKey } : {}),
 					...(isVertexProvider ? { region: payloadRegion } : {}),
 					...(nextAws !== undefined ? { aws: nextAws } : {}),

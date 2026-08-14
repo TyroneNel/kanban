@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	buildTaskAgentSettingsForCreate,
 	buildTaskAgentSettingsForUpdate,
+	formatTaskAgentSettings,
+	resolveSettingsFlag,
 	warnOnAgentSettingsMechanismGaps,
 } from "../../src/commands/task";
 import type { RuntimeTaskAgentSettings } from "../../src/core/api-contract";
@@ -150,5 +152,41 @@ describe("warnOnAgentSettingsMechanismGaps", () => {
 		const output = write.mock.calls.map((call) => String(call[0])).join("");
 		expect(output).toContain("anthropic");
 		expect(output).toContain("provider");
+	});
+
+	it("does not warn for provider on agents that read one (cline/opencode)", () => {
+		const write = captureStderr();
+		warnOnAgentSettingsMechanismGaps("cline", { providerId: "anthropic" });
+		warnOnAgentSettingsMechanismGaps("opencode", { providerId: "openrouter" });
+		expect(write).not.toHaveBeenCalled();
+	});
+});
+
+describe("resolveSettingsFlag", () => {
+	it("returns the generic flag when only it is set", () => {
+		expect(resolveSettingsFlag("generic", undefined, "--model", "--cline-model")).toBe("generic");
+	});
+
+	it("returns the deprecated alias when only it is set", () => {
+		expect(resolveSettingsFlag(undefined, "alias", "--model", "--cline-model")).toBe("alias");
+	});
+
+	it("throws when both forms are passed for the same field", () => {
+		expect(() => resolveSettingsFlag("generic", "alias", "--model", "--cline-model")).toThrow(
+			"Cannot use both --model and the deprecated --cline-model",
+		);
+	});
+});
+
+describe("formatTaskAgentSettings", () => {
+	it("emits agentSettings plus a deprecated clineSettings mirror", () => {
+		expect(formatTaskAgentSettings({ modelId: "acme-model" })).toEqual({
+			agentSettings: { modelId: "acme-model" },
+			clineSettings: { modelId: "acme-model" },
+		});
+	});
+
+	it("emits an empty object when settings are absent", () => {
+		expect(formatTaskAgentSettings(undefined)).toEqual({});
 	});
 });

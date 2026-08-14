@@ -76,8 +76,9 @@ export interface ResolvedClineLaunchConfig {
 	modelId: string | null;
 	apiKey: string | null;
 	baseUrl: string | null;
-	// Launch overrides carry opaque per-task values; the Cline SDK validates them.
-	reasoningEffort?: string | null;
+	// Launch override uses the narrow Cline effort vocabulary; runtime-api maps
+	// opaque card values into it and the Cline SDK validates at launch.
+	reasoningEffort?: RuntimeClineReasoningEffort | null;
 }
 
 export interface AddCustomClineProviderInput {
@@ -783,7 +784,7 @@ export function createClineProviderService() {
 		async resolveLaunchConfig(overrides?: {
 			providerIdOverride?: string;
 			modelIdOverride?: string;
-			reasoningEffortOverride?: string | null;
+			reasoningEffortOverride?: RuntimeClineReasoningEffort | null;
 		}): Promise<ResolvedClineLaunchConfig> {
 			const selectedSettings = overrides?.providerIdOverride
 				? (getSdkProviderSettings(overrides.providerIdOverride) ?? getSelectedProviderSettings())

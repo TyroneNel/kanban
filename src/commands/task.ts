@@ -11,6 +11,7 @@ import type {
 } from "../core/api-contract";
 import { runtimeAgentIdSchema } from "../core/api-contract";
 import { buildKanbanRuntimeUrl, getKanbanRuntimeOrigin, getRuntimeFetch } from "../core/runtime-endpoint";
+import { cloneRuntimeTaskAgentSettings } from "../core/task-agent-settings";
 import {
 	addTaskDependency,
 	addTaskToColumn,
@@ -119,28 +120,15 @@ function parseTaskReasoningEffort(value: string | undefined): ParsedTaskReasonin
 	return value;
 }
 
-function cloneTaskAgentSettings(settings?: RuntimeTaskAgentSettings): RuntimeTaskAgentSettings | undefined {
-	if (settings === undefined) {
-		return undefined;
-	}
-	const providerId = settings.providerId?.trim();
-	const modelId = settings.modelId?.trim();
-	return {
-		...(providerId ? { providerId } : {}),
-		...(modelId ? { modelId } : {}),
-		...(settings.reasoningEffort ? { reasoningEffort: settings.reasoningEffort } : {}),
-	};
-}
-
 /**
  * Emits `agentSettings` plus a deprecated `clineSettings` mirror so existing
  * CLI consumers keep working until the mirror is removed.
  */
-function formatTaskAgentSettings(settings?: RuntimeTaskAgentSettings): JsonRecord {
+export function formatTaskAgentSettings(settings?: RuntimeTaskAgentSettings): JsonRecord {
 	if (settings === undefined) {
 		return {};
 	}
-	const cloned = cloneTaskAgentSettings(settings) ?? {};
+	const cloned = cloneRuntimeTaskAgentSettings(settings) ?? {};
 	return {
 		agentSettings: cloned,
 		clineSettings: cloned,
@@ -176,7 +164,7 @@ export function buildTaskAgentSettingsForUpdate(
 	if (input.providerId === undefined && input.modelId === undefined && input.reasoningEffort === undefined) {
 		return undefined;
 	}
-	const nextSettings = cloneTaskAgentSettings(currentSettings) ?? {};
+	const nextSettings = cloneRuntimeTaskAgentSettings(currentSettings) ?? {};
 	let preserveEmptyOverride = currentSettings !== undefined && Object.keys(currentSettings).length === 0;
 
 	if (input.providerId !== undefined) {
@@ -248,7 +236,7 @@ export function warnOnAgentSettingsMechanismGaps(
 			`Warning: ${label} has no launch-time reasoning-effort override; --effort "${settings.reasoningEffort}" is stored but ignored at launch.\n`,
 		);
 	}
-	if (settings.providerId && agentId !== "cline" && agentId !== "opencode") {
+	if (settings.providerId && capabilities.providerOverride === "none") {
 		process.stderr.write(
 			`Warning: ${label} does not read a provider; --provider "${settings.providerId}" is stored but ignored at launch.\n`,
 		);
@@ -1107,7 +1095,7 @@ async function deleteTaskCommand(input: {
  * Resolve a settings flag that has both a generic form and a deprecated
  * `--cline-*` alias. Passing both forms for the same field is an error.
  */
-function resolveSettingsFlag(
+export function resolveSettingsFlag(
 	generic: string | undefined,
 	alias: string | undefined,
 	genericName: string,
