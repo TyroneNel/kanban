@@ -190,10 +190,10 @@ Parameters:
 
 ## task create
 
-Purpose: create a new task in \`backlog\`, with optional plan mode, auto-review behavior, and per-task agent/model overrides.
+Purpose: create a new task in \`backlog\`, with optional plan mode, auto-review behavior, and per-task agent/provider/model/effort overrides.
 
 Command:
-\`${kanbanCommand} task create [--title "<text>"] --prompt "<text>" [--project-path <path>] [--base-ref <branch>] [--start-in-plan-mode <true|false>] [--auto-review-enabled <true|false>] [--auto-review-mode commit|pr] [--agent-id <id>] [--cline-provider <id>] [--cline-model <id>] [--cline-reasoning-effort <level>]\`
+\`${kanbanCommand} task create [--title "<text>"] --prompt "<text>" [--project-path <path>] [--base-ref <branch>] [--start-in-plan-mode <true|false>] [--auto-review-enabled <true|false>] [--auto-review-mode commit|pr] [--agent-id <id>] [--provider <id>] [--model <id>] [--effort <level>]\`
 
 Parameters:
 - \`--title "<text>"\` optional task title. If omitted, Kanban derives one from the prompt.
@@ -204,16 +204,17 @@ Parameters:
 - \`--auto-review-enabled <true|false>\` optional. Default false. Enables automatic action once task reaches review.
 - \`--auto-review-mode commit|pr\` optional auto-review action. Default \`commit\`.
 - \`--agent-id <id>\` optional per-task agent override: \`cline\` | \`claude\` | \`codex\` | \`droid\` | \`kiro\` | \`gemini\` | \`opencode\`. If omitted, the task inherits the workspace default agent.
-- \`--cline-provider <id>\` optional Cline provider override (e.g. \`anthropic\`, \`openai\`, \`cline\`). Only applies to Cline tasks.
-- \`--cline-model <id>\` optional Cline model override (e.g. \`claude-sonnet-4-20250514\`). Only applies to Cline tasks.
-- \`--cline-reasoning-effort <level>\` optional Cline reasoning effort override: \`low\` | \`medium\` | \`high\` | \`xhigh\`. Only applies to Cline tasks.
+- \`--provider <id>\` optional provider override for the task's agent. Valid values depend on the target agent; only some agents read a provider.
+- \`--model <id>\` optional model override for the task's agent. Passed to the agent verbatim; valid values depend on the target agent.
+- \`--effort <level>\` optional reasoning-effort override for the task's agent. Passed to the agent verbatim; valid values depend on the target agent.
+- Deprecated aliases \`--cline-provider\`, \`--cline-model\`, and \`--cline-reasoning-effort\` map to \`--provider\`, \`--model\`, and \`--effort\`. Prefer the generic flags; never mix both forms for the same field.
 
 ## task update
 
-Purpose: update an existing task, including prompt, base ref, plan mode, auto-review behavior, and per-task agent/model overrides.
+Purpose: update an existing task, including prompt, base ref, plan mode, auto-review behavior, and per-task agent/provider/model/effort overrides.
 
 Command:
-\`${kanbanCommand} task update --task-id <task_id> [--title "<text>"] [--prompt "<text>"] [--project-path <path>] [--base-ref <branch>] [--start-in-plan-mode <true|false>] [--auto-review-enabled <true|false>] [--auto-review-mode commit|pr] [--agent-id <id>] [--cline-provider <id>] [--cline-model <id>] [--cline-reasoning-effort <level>]\`
+\`${kanbanCommand} task update --task-id <task_id> [--title "<text>"] [--prompt "<text>"] [--project-path <path>] [--base-ref <branch>] [--start-in-plan-mode <true|false>] [--auto-review-enabled <true|false>] [--auto-review-mode commit|pr] [--agent-id <id>] [--provider <id>] [--model <id>] [--effort <level>]\`
 
 Parameters:
 - \`--task-id <task_id>\` required task ID.
@@ -225,12 +226,26 @@ Parameters:
 - \`--auto-review-enabled <true|false>\` optional replacement of auto-review toggle. Set false to cancel pending automatic review actions.
 - \`--auto-review-mode commit|pr\` optional replacement auto-review action.
 - \`--agent-id <id>\` optional replacement per-task agent override. Use \`default\` to clear the override and inherit the workspace default agent.
-- \`--cline-provider <id>\` optional replacement Cline provider override. Use \`default\` to clear.
-- \`--cline-model <id>\` optional replacement Cline model override. Use \`default\` to clear.
-- \`--cline-reasoning-effort <level>\` optional replacement Cline reasoning effort override: \`default\` | \`low\` | \`medium\` | \`high\` | \`xhigh\`. Use \`inherit\` to clear.
+- \`--provider <id>\` optional replacement provider override. Use \`default\` to clear.
+- \`--model <id>\` optional replacement model override. Use \`default\` to clear.
+- \`--effort <level>\` optional replacement reasoning-effort override. Use \`default\` or \`inherit\` to clear.
+- Deprecated aliases \`--cline-provider\`, \`--cline-model\`, and \`--cline-reasoning-effort\` map to \`--provider\`, \`--model\`, and \`--effort\`. Prefer the generic flags; never mix both forms for the same field.
 
 Notes:
 - Provide at least one field to change in addition to \`--task-id\`.
+
+## agents
+
+Purpose: list every known coding agent with its install/config state, launch support, and per-task override mechanisms. Run it before setting model or effort overrides to check that the target agent supports them.
+
+Command:
+\`${kanbanCommand} agents [--project-path <path>]\`
+
+Each entry contains:
+- \`id\`, \`label\`: agent identity.
+- \`installed\`, \`configured\`, \`launchSupported\`: state.
+- \`capabilities.modelOverride\` and \`capabilities.effortOverride\`: \`flag\`, \`config\`, \`sdk\`, or \`none\`. \`none\` means Kanban cannot pass that override to the agent at launch.
+- \`capabilities.docsUrl\`: the agent's official CLI reference. Use it to verify model names and effort vocabularies.
 
 ## task done
 
@@ -304,35 +319,43 @@ Parameters:
 - \`--task-id <task_id>\` required task ID.
 - \`--project-path <path>\` optional workspace path. If not already registered in Kanban, it is auto-added for git repos.
 
-# Per-Task Agent and Model Overrides
+# Per-Task Agent, Provider, Model, and Effort Overrides
 
-Tasks can override the workspace default agent, and Cline tasks can additionally override provider, model, and reasoning effort. When the user names a specific agent or model for a task, set it on the card with the flags above instead of inheriting the workspace default.
+Tasks can override the workspace default agent, and additionally carry per-task provider, model, and reasoning-effort settings. Kanban stores these values on the card and passes them verbatim to whichever agent launches the task. Kanban never validates model IDs or effort vocabularies — that is each agent's job at launch.
 
-Map natural language to flags like this:
+When the user names a specific agent, provider, model, or effort for a task, set it with \`--agent-id\`, \`--provider\`, \`--model\`, and \`--effort\` on \`task create\` or \`task update\` instead of inheriting the workspace default.
 
-- "Claude Code" or "Claude" → \`--agent-id claude\`
-- "Codex" → \`--agent-id codex\`
-- "Gemini" → \`--agent-id gemini\`
-- "OpenCode" → \`--agent-id opencode\`
-- "Droid" → \`--agent-id droid\`
-- "Kiro" → \`--agent-id kiro\`
-- "Cline" or a model request on Cline → \`--agent-id cline\` plus \`--cline-provider\` / \`--cline-model\` as needed. Common Cline providers: "Cline with Claude Sonnet" → \`--cline-provider anthropic --cline-model claude-sonnet-4-20250514\`, "Cline with Gemini" → \`--cline-provider gemini\`, "Cline with Kimi" → \`--cline-provider moonshot --cline-model kimi-k2-0905-preview\`.
-- "Claude Code Sonnet" → \`--agent-id claude\`. Model overrides are only supported for Cline tasks, so a model name on a non-Cline agent maps to the agent only.
+Follow this process whenever you set model or effort overrides:
+
+1. Run \`${kanbanCommand} agents\` and check the target agent's \`capabilities.modelOverride\` and \`capabilities.effortOverride\`.
+2. If a mechanism is \`none\`, Kanban cannot pass that override. Warn the user, and if they still want that model/effort behavior, propose the nearest agent whose mechanism is not \`none\`.
+3. You are expected to know current model names and effort vocabularies from your own knowledge. When you are uncertain, or the user names something you do not recognize, verify it against the agent's official docs (the \`capabilities.docsUrl\` from \`${kanbanCommand} agents\`, or web research) BEFORE writing it to the card. Never invent or guess a model ID.
+
+After \`task create\` or \`task update\`, read the JSON response and confirm the echoed \`agentSettings\` match what you asked for. If they differ, report the mismatch to the user instead of silently continuing.
+
+After \`task start\`, if the session errors because the agent rejected a model or effort value, surface the agent's own error message and offer a corrected \`task update\` with a valid value. Kanban does not second-guess values, so only the agent's rejection tells you a value was wrong.
+
+To rerun a task with a different model or effort, update the card and start it again:
+
+\`\`\`
+${kanbanCommand} task update --task-id <task_id> --model <model_id> --effort <level>
+${kanbanCommand} task start --task-id <task_id>
+\`\`\`
 
 Examples:
 
 \`\`\`
 ${kanbanCommand} task create --prompt "Write auth middleware" --agent-id claude
-${kanbanCommand} task create --prompt "Write tests" --agent-id cline --cline-provider anthropic --cline-model claude-sonnet-4-20250514
+${kanbanCommand} task create --prompt "Write tests" --agent-id codex --model <codex_model_id>
 ${kanbanCommand} task update --task-id <task_id> --agent-id codex
-${kanbanCommand} task update --task-id <task_id> --cline-model claude-sonnet-4-20250514
+${kanbanCommand} task update --task-id <task_id> --model <model_id>
 \`\`\`
 
 Notes:
-- \`--cline-provider\`, \`--cline-model\`, and \`--cline-reasoning-effort\` are ignored when \`--agent-id\` is a non-Cline agent. Only use them for Cline tasks.
-- Omit all override flags to inherit the workspace default agent and model.
-- On \`task update\`, use \`--agent-id default\` to clear a per-task agent override, \`--cline-provider default\` / \`--cline-model default\` to clear Cline overrides, and \`--cline-reasoning-effort inherit\` to clear the reasoning effort override.
-- Model IDs must be exact Cline model IDs. If you are unsure which model IDs are available, ask the user which provider and model to use instead of guessing.
+- \`--provider\` is only read by some agents (Cline and OpenCode). For other agents it is stored but ignored; \`${kanbanCommand} agents\` tells you which agents support what.
+- Omit all override flags to inherit the workspace default agent and settings.
+- On \`task update\`, use \`--agent-id default\` to clear a per-task agent override, \`--provider default\` / \`--model default\` to clear those overrides, and \`--effort default\` or \`--effort inherit\` to clear the reasoning-effort override.
+- Values are stored and passed exactly as given. Do not normalize, alias, or translate model names or effort levels yourself.
 
 # Workflow Notes
 

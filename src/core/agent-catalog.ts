@@ -1,5 +1,14 @@
 import type { RuntimeAgentId } from "./api-contract";
 
+// How an agent accepts launch-time model/effort overrides. Mechanisms only — never value lists.
+export type RuntimeAgentOverrideMechanism = "flag" | "config" | "sdk" | "none";
+
+export interface RuntimeAgentCapabilities {
+	modelOverride: RuntimeAgentOverrideMechanism;
+	effortOverride: RuntimeAgentOverrideMechanism;
+	docsUrl: string;
+}
+
 export interface RuntimeAgentCatalogEntry {
 	id: RuntimeAgentId;
 	label: string;
@@ -7,6 +16,7 @@ export interface RuntimeAgentCatalogEntry {
 	baseArgs: string[];
 	autonomousArgs: string[];
 	installUrl: string;
+	capabilities: RuntimeAgentCapabilities;
 }
 
 export const RUNTIME_AGENT_CATALOG: RuntimeAgentCatalogEntry[] = [
@@ -17,6 +27,11 @@ export const RUNTIME_AGENT_CATALOG: RuntimeAgentCatalogEntry[] = [
 		baseArgs: [],
 		autonomousArgs: ["--permission-mode", "auto"],
 		installUrl: "https://docs.anthropic.com/en/docs/claude-code/quickstart",
+		capabilities: {
+			modelOverride: "flag",
+			effortOverride: "flag",
+			docsUrl: "https://code.claude.com/docs/en/cli-reference",
+		},
 	},
 	{
 		id: "codex",
@@ -25,6 +40,11 @@ export const RUNTIME_AGENT_CATALOG: RuntimeAgentCatalogEntry[] = [
 		baseArgs: [],
 		autonomousArgs: ["--dangerously-bypass-approvals-and-sandbox"],
 		installUrl: "https://github.com/openai/codex",
+		capabilities: {
+			modelOverride: "flag",
+			effortOverride: "config",
+			docsUrl: "https://developers.openai.com/codex/cli/reference",
+		},
 	},
 	{
 		id: "cline",
@@ -33,6 +53,11 @@ export const RUNTIME_AGENT_CATALOG: RuntimeAgentCatalogEntry[] = [
 		baseArgs: [],
 		autonomousArgs: ["--auto-approve-all"],
 		installUrl: "https://github.com/cline/cline",
+		capabilities: {
+			modelOverride: "sdk",
+			effortOverride: "sdk",
+			docsUrl: "https://github.com/cline/cline",
+		},
 	},
 	{
 		id: "opencode",
@@ -41,6 +66,11 @@ export const RUNTIME_AGENT_CATALOG: RuntimeAgentCatalogEntry[] = [
 		baseArgs: [],
 		autonomousArgs: [],
 		installUrl: "https://github.com/sst/opencode",
+		capabilities: {
+			modelOverride: "flag",
+			effortOverride: "none",
+			docsUrl: "https://opencode.ai/docs/cli/",
+		},
 	},
 	{
 		id: "droid",
@@ -49,6 +79,11 @@ export const RUNTIME_AGENT_CATALOG: RuntimeAgentCatalogEntry[] = [
 		baseArgs: [],
 		autonomousArgs: ["--auto", "high"],
 		installUrl: "https://docs.factory.ai/cli/getting-started/quickstart",
+		capabilities: {
+			modelOverride: "flag",
+			effortOverride: "flag",
+			docsUrl: "https://docs.factory.ai/droid-cli/cli-reference",
+		},
 	},
 	{
 		id: "kiro",
@@ -57,6 +92,11 @@ export const RUNTIME_AGENT_CATALOG: RuntimeAgentCatalogEntry[] = [
 		baseArgs: ["chat"],
 		autonomousArgs: ["--trust-all-tools"],
 		installUrl: "https://kiro.dev",
+		capabilities: {
+			modelOverride: "none",
+			effortOverride: "none",
+			docsUrl: "https://kiro.dev/docs/reference/cli-commands/",
+		},
 	},
 	{
 		id: "gemini",
@@ -65,6 +105,11 @@ export const RUNTIME_AGENT_CATALOG: RuntimeAgentCatalogEntry[] = [
 		baseArgs: [],
 		autonomousArgs: ["--yolo"],
 		installUrl: "https://github.com/google-gemini/gemini-cli",
+		capabilities: {
+			modelOverride: "flag",
+			effortOverride: "none",
+			docsUrl: "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/cli-reference.md",
+		},
 	},
 ];
 

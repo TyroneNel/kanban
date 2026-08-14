@@ -3,7 +3,6 @@
 // history, and subscribe to summaries and chat events without knowing SDK
 // host, repository, or event-adapter details.
 import type {
-	RuntimeClineReasoningEffort,
 	RuntimeTaskImage,
 	RuntimeTaskSessionMode,
 	RuntimeTaskSessionSummary,
@@ -72,7 +71,8 @@ export interface StartClineTaskSessionRequest {
 	mode?: RuntimeTaskSessionMode;
 	apiKey?: string | null;
 	baseUrl?: string | null;
-	reasoningEffort?: RuntimeClineReasoningEffort | null;
+	// Opaque per-task override; the Cline SDK validates it at launch.
+	reasoningEffort?: string | null;
 	systemPrompt?: string | null;
 }
 
@@ -372,6 +372,12 @@ export class InMemoryClineTaskSessionService implements ClineTaskSessionService 
 				} satisfies ClineTaskSessionEntry);
 		this.messageRepository.setTaskEntry(request.taskId, entry);
 		this.pendingTurnCancelTaskIds.delete(request.taskId);
+
+		// Record what this session actually launched with so the UI/sidebar agent can see it.
+		updateSummary(entry, {
+			modelId,
+			reasoningEffort: request.reasoningEffort ?? null,
+		});
 
 		if (!request.resumeFromTrash && (normalizedPrompt.length > 0 || hasRequestImages)) {
 			const message = createMessage(request.taskId, "user", normalizedPrompt, request.images);

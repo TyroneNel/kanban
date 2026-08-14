@@ -190,7 +190,7 @@ export function createRuntimeApi(deps: CreateRuntimeApiDependencies): RuntimeTrp
 				//   2. body.agentId — the card's current per-task agent override.
 				//   3. scopedRuntimeConfig.selectedAgentId — the workspace-level default.
 				//
-				// clineSettings (which LLM model and reasoning profile the Cline agent uses):
+				// agentSettings (provider/model/reasoning-effort overrides for the launch):
 				//   Always taken from the card's current override object. There is no
 				//   session-level persistence for these;
 				//   if the user changes the model on the card, the next session launch
@@ -217,13 +217,13 @@ export function createRuntimeApi(deps: CreateRuntimeApiDependencies): RuntimeTrp
 				}
 
 				if (useClinePath) {
-					const hasTaskLevelClineSettingsOverride = body.clineSettings !== undefined;
+					const hasTaskLevelAgentSettingsOverride = body.agentSettings !== undefined;
 					const clineLaunchConfig = await clineProviderService.resolveLaunchConfig({
-						providerIdOverride: body.clineSettings?.providerId ?? undefined,
-						modelIdOverride: body.clineSettings?.modelId ?? undefined,
-						...(hasTaskLevelClineSettingsOverride
+						providerIdOverride: body.agentSettings?.providerId ?? undefined,
+						modelIdOverride: body.agentSettings?.modelId ?? undefined,
+						...(hasTaskLevelAgentSettingsOverride
 							? {
-									reasoningEffortOverride: body.clineSettings?.reasoningEffort ?? null,
+									reasoningEffortOverride: body.agentSettings?.reasoningEffort ?? null,
 								}
 							: {}),
 					});
@@ -248,13 +248,13 @@ export function createRuntimeApi(deps: CreateRuntimeApiDependencies): RuntimeTrp
 					let nextSummary = summary;
 					if (shouldCaptureTurnCheckpoint) {
 						try {
-							const nextTurn = (summary.latestTurnCheckpoint?.turn ?? 0) + 1;
+							const nextTurn = (nextSummary.latestTurnCheckpoint?.turn ?? 0) + 1;
 							const checkpoint = await captureTaskTurnCheckpoint({
 								cwd: taskCwd,
 								taskId: body.taskId,
 								turn: nextTurn,
 							});
-							nextSummary = clineTaskSessionService.applyTurnCheckpoint(body.taskId, checkpoint) ?? summary;
+							nextSummary = clineTaskSessionService.applyTurnCheckpoint(body.taskId, checkpoint) ?? nextSummary;
 						} catch {
 							// Best effort checkpointing only.
 						}
@@ -292,6 +292,7 @@ export function createRuntimeApi(deps: CreateRuntimeApiDependencies): RuntimeTrp
 					cols: body.cols,
 					rows: body.rows,
 					workspaceId: workspaceScope.workspaceId,
+					agentSettings: body.agentSettings,
 				});
 
 				let nextSummary = summary;

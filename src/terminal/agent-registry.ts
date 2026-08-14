@@ -1,5 +1,10 @@
 import type { RuntimeConfigState } from "../config/runtime-config";
-import { getRuntimeLaunchSupportedAgentCatalog, RUNTIME_AGENT_CATALOG } from "../core/agent-catalog";
+import type { RuntimeAgentCapabilities } from "../core/agent-catalog";
+import {
+	getRuntimeLaunchSupportedAgentCatalog,
+	isRuntimeAgentLaunchSupported,
+	RUNTIME_AGENT_CATALOG,
+} from "../core/agent-catalog";
 import type {
 	RuntimeAgentDefinition,
 	RuntimeAgentId,
@@ -77,6 +82,28 @@ function getCuratedDefinitions(runtimeConfig: RuntimeConfigState, detected: stri
 			configured: runtimeConfig.selectedAgentId === entry.id,
 		};
 	});
+}
+
+export interface RuntimeAgentCapabilityReportEntry {
+	id: RuntimeAgentId;
+	label: string;
+	installed: boolean;
+	configured: boolean;
+	launchSupported: boolean;
+	capabilities: RuntimeAgentCapabilities;
+}
+
+// Mechanism-only report for the `kanban agents` command: no model/effort value lists.
+export function buildAgentCapabilityReport(runtimeConfig: RuntimeConfigState): RuntimeAgentCapabilityReportEntry[] {
+	const detectedSet = new Set(detectInstalledCommands());
+	return RUNTIME_AGENT_CATALOG.map((entry) => ({
+		id: entry.id,
+		label: entry.label,
+		installed: entry.id === "cline" ? true : detectedSet.has(entry.binary),
+		configured: runtimeConfig.selectedAgentId === entry.id,
+		launchSupported: isRuntimeAgentLaunchSupported(entry.id),
+		capabilities: entry.capabilities,
+	}));
 }
 
 export function resolveAgentCommand(runtimeConfig: RuntimeConfigState): ResolvedAgentCommand | null {
