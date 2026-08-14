@@ -223,6 +223,36 @@ function buildTaskClineSettingsForUpdate(
 	return nextSettings;
 }
 
+function isNonClineAgentOverride(agentId: RuntimeAgentId | null | undefined): boolean {
+	return agentId !== undefined && agentId !== null && agentId !== "cline";
+}
+
+/**
+ * Cline settings only apply to tasks that run on Cline. When the agent
+ * override is explicitly a non-Cline agent, drop them on create so the card
+ * does not carry Cline-only overrides. `undefined`/`null` agent overrides
+ * inherit the workspace default (which may be Cline), so settings are kept.
+ */
+export function resolveTaskClineSettingsForCreate(input: {
+	agentId: RuntimeAgentId | undefined;
+	clineSettings: RuntimeTaskClineSettings | undefined;
+}): RuntimeTaskClineSettings | undefined {
+	return isNonClineAgentOverride(input.agentId) ? undefined : input.clineSettings;
+}
+
+/**
+ * Same semantics as {@link resolveTaskClineSettingsForCreate} for updates:
+ * switching a card to a non-Cline agent clears any stored Cline overrides
+ * (`null`), while `undefined`/`null` agent overrides pass the merged settings
+ * through untouched.
+ */
+export function resolveTaskClineSettingsForUpdate(input: {
+	agentId: RuntimeAgentId | null | undefined;
+	clineSettings: RuntimeTaskClineSettings | null | undefined;
+}): RuntimeTaskClineSettings | null | undefined {
+	return isNonClineAgentOverride(input.agentId) ? null : input.clineSettings;
+}
+
 function resolveTaskCommandTarget(input: TaskCommandTarget, commandName: string): ResolvedTaskCommandTarget {
 	const taskId = input.taskId?.trim();
 	const column = input.column;
@@ -487,6 +517,10 @@ async function createTask(input: {
 	const workspaceRepoPath = await resolveWorkspaceRepoPath(input.projectPath, input.cwd);
 	const workspaceId = await ensureRuntimeWorkspace(workspaceRepoPath);
 	const runtimeClient = createRuntimeTrpcClient(workspaceId);
+	const clineSettings = resolveTaskClineSettingsForCreate({
+		agentId: input.agentId,
+		clineSettings: input.clineSettings,
+	});
 	const created = await updateRuntimeWorkspaceState(runtimeClient, workspaceRepoPath, (state) => {
 		const resolvedBaseRef = (input.baseRef ?? "").trim() || resolveTaskBaseRef(state);
 		if (!resolvedBaseRef) {
@@ -502,7 +536,7 @@ async function createTask(input: {
 				autoReviewEnabled: input.autoReviewEnabled,
 				autoReviewMode: input.autoReviewMode,
 				agentId: input.agentId,
-				clineSettings: input.clineSettings,
+				clineSettings,
 				baseRef: resolvedBaseRef,
 			},
 			() => globalThis.crypto.randomUUID(),
@@ -574,6 +608,10 @@ async function updateTaskCommand(input: {
 			modelId: input.clineModelId,
 			reasoningEffort: input.clineReasoningEffort,
 		});
+		const clineSettings = resolveTaskClineSettingsForUpdate({
+			agentId: input.agentId,
+			clineSettings: nextTaskClineSettings,
+		});
 
 		const updatedTask = updateTask(runtimeState.board, input.taskId, {
 			title: input.title ?? taskRecord.task.title,
@@ -583,7 +621,7 @@ async function updateTaskCommand(input: {
 			autoReviewEnabled: input.autoReviewEnabled ?? taskRecord.task.autoReviewEnabled === true,
 			autoReviewMode: input.autoReviewMode ?? taskRecord.task.autoReviewMode ?? "commit",
 			agentId: input.agentId,
-			clineSettings: nextTaskClineSettings,
+			clineSettings,
 		});
 		if (!updatedTask.updated || !updatedTask.task) {
 			throw new Error(`Task "${input.taskId}" could not be updated.`);

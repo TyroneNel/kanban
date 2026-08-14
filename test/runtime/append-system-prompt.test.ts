@@ -84,6 +84,33 @@ describe("renderAppendSystemPrompt", () => {
 		expect(rendered).not.toContain("claude mcp add --transport http --scope user linear https://mcp.linear.app/mcp");
 		expect(rendered).not.toContain("droid mcp add linear https://mcp.linear.app/mcp --type http");
 	});
+
+	it("documents per-task agent and model override flags on task create and task update", () => {
+		const rendered = renderAppendSystemPrompt("kanban");
+
+		expect(rendered).toContain("--agent-id");
+		expect(rendered).toContain("--cline-provider");
+		expect(rendered).toContain("--cline-model");
+		expect(rendered).toContain("--cline-reasoning-effort");
+		expect(rendered).toContain("--agent-id default");
+		expect(rendered).toContain("--cline-reasoning-effort inherit");
+	});
+
+	it("renders per-task agent and model override guidance with natural-language mapping and examples", () => {
+		const rendered = renderAppendSystemPrompt("kanban");
+
+		expect(rendered).toContain("# Per-Task Agent and Model Overrides");
+		expect(rendered).toContain("--agent-id claude");
+		expect(rendered).toContain("--agent-id codex");
+		expect(rendered).toContain(
+			'kanban task create --prompt "Write tests" --agent-id cline --cline-provider anthropic --cline-model claude-sonnet-4-20250514',
+		);
+		expect(rendered).toContain("Cline with Claude Sonnet");
+		expect(rendered).toContain("--cline-provider moonshot --cline-model kimi-k2-0905-preview");
+		expect(rendered).toContain("Model overrides are only supported for Cline tasks");
+		expect(rendered).toContain("are ignored when `--agent-id` is a non-Cline agent");
+		expect(rendered).toContain("kanban task update --task-id <task_id> --cline-model claude-sonnet-4-20250514");
+	});
 });
 
 describe("resolveHomeAgentAppendSystemPrompt", () => {
