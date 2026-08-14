@@ -2,6 +2,7 @@
 // Rendering lives here, while session state and action wiring come from the
 // controller hook so multiple surfaces can share the same behavior.
 
+import { parseRuntimeClineReasoningEffort } from "@runtime-task-agent-settings";
 import { AlertTriangle } from "lucide-react";
 import React, {
 	type ReactElement,
@@ -13,7 +14,6 @@ import React, {
 	useRef,
 	useState,
 } from "react";
-
 import { ClineChatComposer } from "@/components/detail-panels/cline-chat-composer";
 import { ClineChatMessageItem } from "@/components/detail-panels/cline-chat-message-item";
 import {
@@ -446,7 +446,7 @@ export const ClineAgentChatPanel = React.forwardRef<ClineAgentChatPanelHandle, C
 						selectedModelButtonText={selectedModelButtonText}
 						onSelectModel={handleSelectModel}
 						reasoningEnabledModelIds={reasoningEnabledModelIds}
-						selectedReasoningEffort={clineSettings.reasoningEffort as RuntimeClineReasoningEffort | ""}
+						selectedReasoningEffort={parseRuntimeClineReasoningEffort(clineSettings.reasoningEffort) ?? ""}
 						onSelectReasoningEffort={handleSelectReasoningEffort}
 						isModelLoading={clineSettings.isLoadingProviderModels}
 						isModelSaving={isSavingModel}

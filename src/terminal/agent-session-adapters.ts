@@ -130,6 +130,19 @@ function hasCliOption(args: string[], optionName: string): boolean {
 	return false;
 }
 
+// Push a card-derived CLI override verbatim unless the user/workspace already
+// set one of the equivalent flags. Values are opaque and never normalized.
+function applyCliOptionOverride(
+	args: string[],
+	value: string | undefined,
+	flags: readonly [string, ...string[]],
+): void {
+	if (!value || flags.some((flag) => hasCliOption(args, flag))) {
+		return;
+	}
+	args.push(flags[0], value);
+}
+
 function getClineHookScriptPath(
 	hooksDir: string,
 	hookName: "Notification" | "TaskComplete" | "UserPromptSubmit" | "PreToolUse" | "PostToolUse",
@@ -706,12 +719,8 @@ const claudeAdapter: AgentSessionAdapter = {
 
 		// Per-task model/effort overrides, passed verbatim. User/workspace args win.
 		// Claude Code CLI reference: https://code.claude.com/docs/en/cli-reference
-		if (input.agentSettings?.modelId && !hasCliOption(args, "--model")) {
-			args.push("--model", input.agentSettings.modelId);
-		}
-		if (input.agentSettings?.reasoningEffort && !hasCliOption(args, "--effort")) {
-			args.push("--effort", input.agentSettings.reasoningEffort);
-		}
+		applyCliOptionOverride(args, input.agentSettings?.modelId, ["--model"]);
+		applyCliOptionOverride(args, input.agentSettings?.reasoningEffort, ["--effort"]);
 
 		const withPromptLaunch = withPrompt(args, input.prompt, "append");
 		return {
@@ -788,9 +797,7 @@ const codexAdapter: AgentSessionAdapter = {
 
 		// Per-task model/effort overrides, passed verbatim. User/workspace args win.
 		// Codex CLI reference: https://developers.openai.com/codex/cli/reference
-		if (input.agentSettings?.modelId && !hasCliOption(codexArgs, "-m") && !hasCliOption(codexArgs, "--model")) {
-			codexArgs.push("-m", input.agentSettings.modelId);
-		}
+		applyCliOptionOverride(codexArgs, input.agentSettings?.modelId, ["-m", "--model"]);
 		if (input.agentSettings?.reasoningEffort && !hasCodexConfigOverride(codexArgs, "model_reasoning_effort")) {
 			codexArgs.push("-c", `model_reasoning_effort=${input.agentSettings.reasoningEffort}`);
 		}
@@ -890,9 +897,7 @@ const geminiAdapter: AgentSessionAdapter = {
 		// Per-task model override, passed verbatim. User/workspace args win. Gemini CLI has no
 		// launch-time reasoning-effort flag. Reference:
 		// https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/cli-reference.md
-		if (input.agentSettings?.modelId && !hasCliOption(args, "-m") && !hasCliOption(args, "--model")) {
-			args.push("-m", input.agentSettings.modelId);
-		}
+		applyCliOptionOverride(args, input.agentSettings?.modelId, ["-m", "--model"]);
 
 		const trimmed = input.prompt.trim();
 		if (trimmed) {
@@ -1288,12 +1293,8 @@ const droidAdapter: AgentSessionAdapter = {
 		// Per-task model/effort overrides, passed verbatim. Long-form flags only: in droid's
 		// interactive chat mode -r means --resume. Reference:
 		// https://docs.factory.ai/droid-cli/cli-reference
-		if (input.agentSettings?.modelId && !hasCliOption(args, "--model")) {
-			args.push("--model", input.agentSettings.modelId);
-		}
-		if (input.agentSettings?.reasoningEffort && !hasCliOption(args, "--reasoning-effort")) {
-			args.push("--reasoning-effort", input.agentSettings.reasoningEffort);
-		}
+		applyCliOptionOverride(args, input.agentSettings?.modelId, ["--model"]);
+		applyCliOptionOverride(args, input.agentSettings?.reasoningEffort, ["--reasoning-effort"]);
 
 		const withPromptLaunch = withPrompt(args, input.prompt, "append");
 		return {

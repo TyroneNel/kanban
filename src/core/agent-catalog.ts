@@ -6,6 +6,7 @@ export type RuntimeAgentOverrideMechanism = "flag" | "config" | "sdk" | "none";
 export interface RuntimeAgentCapabilities {
 	modelOverride: RuntimeAgentOverrideMechanism;
 	effortOverride: RuntimeAgentOverrideMechanism;
+	providerOverride: RuntimeAgentOverrideMechanism;
 	docsUrl: string;
 }
 
@@ -16,6 +17,8 @@ export interface RuntimeAgentCatalogEntry {
 	baseArgs: string[];
 	autonomousArgs: string[];
 	installUrl: string;
+	/** Built-in runtime (e.g. the embedded Cline SDK) that needs no external binary detection. */
+	embedded?: boolean;
 	capabilities: RuntimeAgentCapabilities;
 }
 
@@ -30,6 +33,7 @@ export const RUNTIME_AGENT_CATALOG: RuntimeAgentCatalogEntry[] = [
 		capabilities: {
 			modelOverride: "flag",
 			effortOverride: "flag",
+			providerOverride: "none",
 			docsUrl: "https://code.claude.com/docs/en/cli-reference",
 		},
 	},
@@ -43,6 +47,7 @@ export const RUNTIME_AGENT_CATALOG: RuntimeAgentCatalogEntry[] = [
 		capabilities: {
 			modelOverride: "flag",
 			effortOverride: "config",
+			providerOverride: "none",
 			docsUrl: "https://developers.openai.com/codex/cli/reference",
 		},
 	},
@@ -53,9 +58,12 @@ export const RUNTIME_AGENT_CATALOG: RuntimeAgentCatalogEntry[] = [
 		baseArgs: [],
 		autonomousArgs: ["--auto-approve-all"],
 		installUrl: "https://github.com/cline/cline",
+		// Embedded SDK runtime: always available, no external binary to detect.
+		embedded: true,
 		capabilities: {
 			modelOverride: "sdk",
 			effortOverride: "sdk",
+			providerOverride: "sdk",
 			docsUrl: "https://github.com/cline/cline",
 		},
 	},
@@ -69,6 +77,7 @@ export const RUNTIME_AGENT_CATALOG: RuntimeAgentCatalogEntry[] = [
 		capabilities: {
 			modelOverride: "flag",
 			effortOverride: "none",
+			providerOverride: "flag",
 			docsUrl: "https://opencode.ai/docs/cli/",
 		},
 	},
@@ -82,6 +91,7 @@ export const RUNTIME_AGENT_CATALOG: RuntimeAgentCatalogEntry[] = [
 		capabilities: {
 			modelOverride: "flag",
 			effortOverride: "flag",
+			providerOverride: "none",
 			docsUrl: "https://docs.factory.ai/droid-cli/cli-reference",
 		},
 	},
@@ -95,6 +105,7 @@ export const RUNTIME_AGENT_CATALOG: RuntimeAgentCatalogEntry[] = [
 		capabilities: {
 			modelOverride: "none",
 			effortOverride: "none",
+			providerOverride: "none",
 			docsUrl: "https://kiro.dev/docs/reference/cli-commands/",
 		},
 	},
@@ -108,6 +119,7 @@ export const RUNTIME_AGENT_CATALOG: RuntimeAgentCatalogEntry[] = [
 		capabilities: {
 			modelOverride: "flag",
 			effortOverride: "none",
+			providerOverride: "none",
 			docsUrl: "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/cli-reference.md",
 		},
 	},
