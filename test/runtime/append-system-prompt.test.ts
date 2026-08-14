@@ -85,31 +85,39 @@ describe("renderAppendSystemPrompt", () => {
 		expect(rendered).not.toContain("droid mcp add linear https://mcp.linear.app/mcp --type http");
 	});
 
-	it("documents per-task agent and model override flags on task create and task update", () => {
+	it("documents per-task agent and settings override flags on task create and task update", () => {
 		const rendered = renderAppendSystemPrompt("kanban");
 
 		expect(rendered).toContain("--agent-id");
-		expect(rendered).toContain("--cline-provider");
-		expect(rendered).toContain("--cline-model");
-		expect(rendered).toContain("--cline-reasoning-effort");
+		expect(rendered).toContain("--provider <id>");
+		expect(rendered).toContain("--model <id>");
+		expect(rendered).toContain("--effort <level>");
 		expect(rendered).toContain("--agent-id default");
-		expect(rendered).toContain("--cline-reasoning-effort inherit");
+		expect(rendered).toContain("--effort inherit");
+		expect(rendered).toContain("kanban agents");
 	});
 
-	it("renders per-task agent and model override guidance with natural-language mapping and examples", () => {
+	it("documents the agents capability command", () => {
 		const rendered = renderAppendSystemPrompt("kanban");
 
-		expect(rendered).toContain("# Per-Task Agent and Model Overrides");
-		expect(rendered).toContain("--agent-id claude");
-		expect(rendered).toContain("--agent-id codex");
-		expect(rendered).toContain(
-			'kanban task create --prompt "Write tests" --agent-id cline --cline-provider anthropic --cline-model claude-sonnet-4-20250514',
-		);
-		expect(rendered).toContain("Cline with Claude Sonnet");
-		expect(rendered).toContain("--cline-provider moonshot --cline-model kimi-k2-0905-preview");
-		expect(rendered).toContain("Model overrides are only supported for Cline tasks");
-		expect(rendered).toContain("are ignored when `--agent-id` is a non-Cline agent");
-		expect(rendered).toContain("kanban task update --task-id <task_id> --cline-model claude-sonnet-4-20250514");
+		expect(rendered).toContain("## agents");
+		expect(rendered).toContain("capabilities.modelOverride");
+		expect(rendered).toContain("capabilities.effortOverride");
+		expect(rendered).toContain("capabilities.docsUrl");
+	});
+
+	it("encodes override behavior without hardcoded model names or effort tables", () => {
+		const rendered = renderAppendSystemPrompt("kanban");
+
+		expect(rendered).toContain("# Per-Task Agent, Provider, Model, and Effort Overrides");
+		expect(rendered).toContain("Never invent or guess a model ID");
+		expect(rendered).toContain("surface the agent's own error message");
+
+		// No hardcoded model IDs or effort-level vocabularies may leak into the prompt.
+		expect(rendered).not.toContain("claude-sonnet-4-20250514");
+		expect(rendered).not.toContain("kimi-k2-0905-preview");
+		expect(rendered).not.toContain("moonshot");
+		expect(rendered).not.toContain("xhigh");
 	});
 });
 

@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import type {
 	RuntimeAgentId,
 	RuntimeHookEvent,
+	RuntimeTaskAgentSettings,
 	RuntimeTaskImage,
 	RuntimeTaskSessionSummary,
 } from "../core/api-contract";
@@ -38,6 +39,7 @@ export interface AgentAdapterLaunchInput {
 	resumeFromTrash?: boolean;
 	env?: Record<string, string | undefined>;
 	workspaceId?: string;
+	agentSettings?: RuntimeTaskAgentSettings;
 }
 
 export type AgentOutputTransitionDetector = (
@@ -53,6 +55,7 @@ export interface PreparedAgentLaunch {
 	env: Record<string, string | undefined>;
 	cleanup?: () => Promise<void>;
 	deferredStartupInput?: string;
+	sessionWarning?: string;
 	detectOutputTransition?: AgentOutputTransitionDetector;
 	shouldInspectOutputForTransition?: AgentOutputTransitionInspectionPredicate;
 }
@@ -701,6 +704,15 @@ const claudeAdapter: AgentSessionAdapter = {
 			args.push("--append-system-prompt", appendedSystemPrompt);
 		}
 
+		// Per-task model/effort overrides, passed verbatim. User/workspace args win.
+		// Claude Code CLI reference: https://code.claude.com/docs/en/cli-reference
+		if (input.agentSettings?.modelId && !hasCliOption(args, "--model")) {
+			args.push("--model", input.agentSettings.modelId);
+		}
+		if (input.agentSettings?.reasoningEffort && !hasCliOption(args, "--effort")) {
+			args.push("--effort", input.agentSettings.reasoningEffort);
+		}
+
 		const withPromptLaunch = withPrompt(args, input.prompt, "append");
 		return {
 			...withPromptLaunch,
@@ -772,6 +784,15 @@ const codexAdapter: AgentSessionAdapter = {
 					workspaceId: hooks.workspaceId,
 				}),
 			);
+		}
+
+		// Per-task model/effort overrides, passed verbatim. User/workspace args win.
+		// Codex CLI reference: https://developers.openai.com/codex/cli/reference
+		if (input.agentSettings?.modelId && !hasCliOption(codexArgs, "-m") && !hasCliOption(codexArgs, "--model")) {
+			codexArgs.push("-m", input.agentSettings.modelId);
+		}
+		if (input.agentSettings?.reasoningEffort && !hasCodexConfigOverride(codexArgs, "model_reasoning_effort")) {
+			codexArgs.push("-c", `model_reasoning_effort=${input.agentSettings.reasoningEffort}`);
 		}
 
 		const trimmed = input.prompt.trim();
@@ -864,6 +885,13 @@ const geminiAdapter: AgentSessionAdapter = {
 				}),
 			);
 			env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = configPath;
+		}
+
+		// Per-task model override, passed verbatim. User/workspace args win. Gemini CLI has no
+		// launch-time reasoning-effort flag. Reference:
+		// https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/cli-reference.md
+		if (input.agentSettings?.modelId && !hasCliOption(args, "-m") && !hasCliOption(args, "--model")) {
+			args.push("-m", input.agentSettings.modelId);
 		}
 
 		const trimmed = input.prompt.trim();
@@ -1152,11 +1180,21 @@ const opencodeAdapter: AgentSessionAdapter = {
 		}
 
 		// Workaround: with --prompt, OpenCode can pick an unexpected provider/model.
-		// Explicitly pass the user's preferred model so prompt runs stay on their usual provider.
+		// Per-task model overrides win; otherwise explicitly pass the user's preferred model.
+		// Values are passed verbatim. OpenCode CLI reference: https://opencode.ai/docs/cli/
 		if (!hasOpenCodeModelArg(args)) {
-			const preferredModel = await resolveOpenCodePreferredModelArg(baseConfigPath);
-			if (preferredModel) {
-				args.push("--model", preferredModel);
+			const settingsModelId = input.agentSettings?.modelId?.trim();
+			if (settingsModelId) {
+				const settingsProviderId = input.agentSettings?.providerId?.trim();
+				args.push(
+					"--model",
+					settingsProviderId ? normalizeOpenCodeModel(settingsProviderId, settingsModelId) : settingsModelId,
+				);
+			} else {
+				const preferredModel = await resolveOpenCodePreferredModelArg(baseConfigPath);
+				if (preferredModel) {
+					args.push("--model", preferredModel);
+				}
 			}
 		}
 
@@ -1245,6 +1283,16 @@ const droidAdapter: AgentSessionAdapter = {
 			!hasCliOption(args, "--system-prompt")
 		) {
 			args.push("--append-system-prompt", appendedSystemPrompt);
+		}
+
+		// Per-task model/effort overrides, passed verbatim. Long-form flags only: in droid's
+		// interactive chat mode -r means --resume. Reference:
+		// https://docs.factory.ai/droid-cli/cli-reference
+		if (input.agentSettings?.modelId && !hasCliOption(args, "--model")) {
+			args.push("--model", input.agentSettings.modelId);
+		}
+		if (input.agentSettings?.reasoningEffort && !hasCliOption(args, "--reasoning-effort")) {
+			args.push("--reasoning-effort", input.agentSettings.reasoningEffort);
 		}
 
 		const withPromptLaunch = withPrompt(args, input.prompt, "append");
@@ -1362,12 +1410,23 @@ const kiroAdapter: AgentSessionAdapter = {
 				].join(" ")
 			: input.prompt;
 		const withPromptLaunch = withPrompt(args, planPrompt, "append");
+		// Kiro has no launch-time model/effort mechanism (see agent catalog capabilities).
+		// Never drop silently: surface a visible warning in the session output instead.
+		const hasTaskAgentSettings = Boolean(
+			input.agentSettings?.providerId || input.agentSettings?.modelId || input.agentSettings?.reasoningEffort,
+		);
 		return {
 			...withPromptLaunch,
 			env: {
 				...withPromptLaunch.env,
 				...env,
 			},
+			...(hasTaskAgentSettings
+				? {
+						sessionWarning:
+							"kiro ignores launch-time model settings; the task's provider/model/effort overrides were stored but not applied to this session.",
+					}
+				: {}),
 		};
 	},
 };
