@@ -1,8 +1,12 @@
+import type { SdkReasoningEffort } from "../cline-sdk/sdk-provider-boundary";
 import {
 	type RuntimeClineReasoningEffort,
 	type RuntimeTaskAgentSettings,
 	runtimeClineReasoningEffortSchema,
 } from "./api-contract";
+
+type AssertAssignable<T extends U, U> = T;
+export type RuntimeClineEffortMatchesSdk = AssertAssignable<RuntimeClineReasoningEffort, SdkReasoningEffort>;
 
 // Normalized copy of a task's agent settings: trims provider/model IDs, drops
 // empty fields, and never retains a caller-owned object reference.

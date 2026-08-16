@@ -6,6 +6,7 @@ export type RuntimeAgentOverrideMechanism = "flag" | "config" | "sdk" | "none";
 export interface RuntimeAgentCapabilities {
 	modelOverride: RuntimeAgentOverrideMechanism;
 	effortOverride: RuntimeAgentOverrideMechanism;
+	/** Whether the agent consumes `providerId` at launch (Cline SDK, OpenCode `provider/model`). */
 	providerOverride: RuntimeAgentOverrideMechanism;
 	docsUrl: string;
 }
