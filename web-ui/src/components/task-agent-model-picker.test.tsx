@@ -17,21 +17,71 @@ vi.mock("@runtime-agent-catalog", () => ({
 	getRuntimeLaunchSupportedAgentCatalog: vi.fn(() => [
 		{ id: "cline", label: "Cline", binary: "cline" },
 		{ id: "claude", label: "Claude Code", binary: "claude" },
+		{ id: "gemini", label: "Gemini CLI", binary: "gemini" },
+		{ id: "kiro", label: "Kiro", binary: "kiro-cli" },
+		{ id: "opencode", label: "OpenCode", binary: "opencode" },
 	]),
 	getRuntimeAgentCatalogEntry: vi.fn((agentId: string) => {
-		const capabilitiesByAgent: Record<string, { modelOverride: string; effortOverride: string; docsUrl: string }> = {
-			cline: { modelOverride: "sdk", effortOverride: "sdk", docsUrl: "https://github.com/cline/cline" },
+		const capabilitiesByAgent: Record<
+			string,
+			{
+				label: string;
+				modelOverride: string;
+				effortOverride: string;
+				providerOverride: string;
+				docsUrl: string;
+			}
+		> = {
+			cline: {
+				label: "Cline",
+				modelOverride: "sdk",
+				effortOverride: "sdk",
+				providerOverride: "sdk",
+				docsUrl: "https://github.com/cline/cline",
+			},
 			claude: {
+				label: "Claude Code",
 				modelOverride: "flag",
 				effortOverride: "flag",
+				providerOverride: "none",
 				docsUrl: "https://code.claude.com/docs/en/cli-reference",
+			},
+			gemini: {
+				label: "Gemini CLI",
+				modelOverride: "flag",
+				effortOverride: "none",
+				providerOverride: "none",
+				docsUrl: "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/cli-reference.md",
+			},
+			kiro: {
+				label: "Kiro",
+				modelOverride: "none",
+				effortOverride: "none",
+				providerOverride: "none",
+				docsUrl: "https://kiro.dev/docs/reference/cli-commands/",
+			},
+			opencode: {
+				label: "OpenCode",
+				modelOverride: "flag",
+				effortOverride: "none",
+				providerOverride: "flag",
+				docsUrl: "https://opencode.ai/docs/cli/",
 			},
 		};
 		const capabilities = capabilitiesByAgent[agentId];
 		if (!capabilities) {
 			return null;
 		}
-		return { id: agentId, label: agentId, capabilities };
+		return {
+			id: agentId,
+			label: capabilities.label,
+			capabilities: {
+				modelOverride: capabilities.modelOverride,
+				effortOverride: capabilities.effortOverride,
+				providerOverride: capabilities.providerOverride,
+				docsUrl: capabilities.docsUrl,
+			},
+		};
 	}),
 }));
 
@@ -390,6 +440,161 @@ describe("useTaskAgentModelPicker – provider-aware model default label", () =>
 		const defaultOption = snapshot!.clineModelOptions[0]!;
 		expect(defaultOption.value).toBe("");
 		expect(defaultOption.label).toBe("Claude Opus 4");
+	});
+});
+
+const AGENT_OPTIONS = [
+	{ value: "", label: "Cline" },
+	{ value: "claude", label: "Claude Code" },
+	{ value: "gemini", label: "Gemini CLI" },
+	{ value: "kiro", label: "Kiro" },
+	{ value: "opencode", label: "OpenCode" },
+];
+
+async function openOverrideSettings(): Promise<void> {
+	const settingsTrigger = Array.from(container.querySelectorAll("button")).find((button) =>
+		button.textContent?.includes("Override Agent Settings"),
+	);
+	expect(settingsTrigger).not.toBeUndefined();
+	await act(async () => {
+		(settingsTrigger as HTMLButtonElement).click();
+	});
+}
+
+describe("TaskAgentModelPicker – mechanism-driven fields", () => {
+	it("shows free-text model, effort, and a docs link for claude", async () => {
+		const { TaskAgentModelPicker } = await import("@/components/task-agent-model-picker");
+
+		await act(async () =>
+			root.render(
+				<TaskAgentModelPicker
+					agentId={"claude" as RuntimeAgentId}
+					onAgentIdChange={() => {}}
+					agentSettings={createTaskAgentSettings({ modelId: "sentinel-model" })}
+					onAgentSettingsChange={() => {}}
+					agentOptions={AGENT_OPTIONS}
+					clineProviderOptions={[{ value: "", label: "Default" }]}
+					clineModelOptions={[{ value: "", label: "Default" }]}
+					isLoadingProviders={false}
+					isLoadingModels={false}
+					defaultAgentId={"cline" as RuntimeAgentId}
+				/>,
+			),
+		);
+
+		await openOverrideSettings();
+
+		expect(container.querySelector('input[aria-label="Model override"]')).not.toBeNull();
+		expect(container.querySelector('input[aria-label="Reasoning effort override"]')).not.toBeNull();
+		const docsLink = container.querySelector('a[href="https://code.claude.com/docs/en/cli-reference"]');
+		expect(docsLink).not.toBeNull();
+		expect(docsLink?.textContent).toContain("Claude Code CLI reference");
+	});
+
+	it("hides effort for gemini and both free-text fields for kiro", async () => {
+		const { TaskAgentModelPicker } = await import("@/components/task-agent-model-picker");
+
+		const renderForAgent = async (agentId: RuntimeAgentId) => {
+			await act(async () =>
+				root.render(
+					<TaskAgentModelPicker
+						agentId={agentId}
+						onAgentIdChange={() => {}}
+						agentSettings={undefined}
+						onAgentSettingsChange={() => {}}
+						agentOptions={AGENT_OPTIONS}
+						clineProviderOptions={[{ value: "", label: "Default" }]}
+						clineModelOptions={[{ value: "", label: "Default" }]}
+						isLoadingProviders={false}
+						isLoadingModels={false}
+						defaultAgentId={"cline" as RuntimeAgentId}
+					/>,
+				),
+			);
+			await openOverrideSettings();
+		};
+
+		await renderForAgent("gemini");
+		expect(container.querySelector('input[aria-label="Model override"]')).not.toBeNull();
+		expect(container.querySelector('input[aria-label="Reasoning effort override"]')).toBeNull();
+
+		await renderForAgent("kiro");
+		expect(container.querySelector('input[aria-label="Model override"]')).toBeNull();
+		expect(container.querySelector('input[aria-label="Reasoning effort override"]')).toBeNull();
+	});
+
+	it("keeps model and clears provider when switching from cline to gemini", async () => {
+		const { TaskAgentModelPicker } = await import("@/components/task-agent-model-picker");
+		const onAgentSettingsChange = vi.fn();
+		const onAgentIdChange = vi.fn();
+
+		await act(async () =>
+			root.render(
+				<TaskAgentModelPicker
+					agentId={"cline" as RuntimeAgentId}
+					onAgentIdChange={onAgentIdChange}
+					agentSettings={createTaskAgentSettings({
+						providerId: "anthropic",
+						modelId: "kept-model",
+					})}
+					onAgentSettingsChange={onAgentSettingsChange}
+					agentOptions={AGENT_OPTIONS}
+					clineProviderOptions={[{ value: "", label: "Anthropic" }]}
+					clineModelOptions={[{ value: "", label: "Default" }]}
+					isLoadingProviders={false}
+					isLoadingModels={false}
+					defaultAgentId={"cline" as RuntimeAgentId}
+				/>,
+			),
+		);
+
+		await openOverrideSettings();
+		const select = container.querySelector("select");
+		expect(select).not.toBeNull();
+		await act(async () => {
+			const event = new Event("change", { bubbles: true });
+			Object.defineProperty(select, "value", { writable: true, value: "gemini" });
+			select?.dispatchEvent(event);
+		});
+
+		expect(onAgentIdChange).toHaveBeenCalledWith("gemini");
+		expect(onAgentSettingsChange).toHaveBeenCalledWith({ modelId: "kept-model" });
+	});
+
+	it("keeps provider when switching from cline to opencode", async () => {
+		const { TaskAgentModelPicker } = await import("@/components/task-agent-model-picker");
+		const onAgentSettingsChange = vi.fn();
+
+		await act(async () =>
+			root.render(
+				<TaskAgentModelPicker
+					agentId={"cline" as RuntimeAgentId}
+					onAgentIdChange={() => {}}
+					agentSettings={createTaskAgentSettings({
+						providerId: "openrouter",
+						modelId: "kept-model",
+					})}
+					onAgentSettingsChange={onAgentSettingsChange}
+					agentOptions={AGENT_OPTIONS}
+					clineProviderOptions={[{ value: "", label: "OpenRouter" }]}
+					clineModelOptions={[{ value: "", label: "Default" }]}
+					isLoadingProviders={false}
+					isLoadingModels={false}
+					defaultAgentId={"cline" as RuntimeAgentId}
+				/>,
+			),
+		);
+
+		await openOverrideSettings();
+		const select = container.querySelector("select");
+		expect(select).not.toBeNull();
+		await act(async () => {
+			const event = new Event("change", { bubbles: true });
+			Object.defineProperty(select, "value", { writable: true, value: "opencode" });
+			select?.dispatchEvent(event);
+		});
+
+		expect(onAgentSettingsChange).not.toHaveBeenCalled();
 	});
 });
 

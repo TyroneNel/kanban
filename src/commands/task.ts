@@ -209,6 +209,13 @@ export function buildTaskAgentSettingsForUpdate(
 	return nextSettings;
 }
 
+/** True only when the command itself named an agent (`--agent-id`), not when a card already has one. */
+export function shouldWarnOnExplicitAgentId(
+	explicitAgentId: RuntimeAgentId | null | undefined,
+): explicitAgentId is RuntimeAgentId {
+	return explicitAgentId != null;
+}
+
 /**
  * Never silently drop per-task settings: when an explicit agent override is
  * set, warn on stderr about settings the agent has no launch mechanism for.
@@ -507,7 +514,7 @@ async function createTask(input: {
 	const workspaceRepoPath = await resolveWorkspaceRepoPath(input.projectPath, input.cwd);
 	const workspaceId = await ensureRuntimeWorkspace(workspaceRepoPath);
 	const runtimeClient = createRuntimeTrpcClient(workspaceId);
-	if (input.agentId) {
+	if (shouldWarnOnExplicitAgentId(input.agentId)) {
 		warnOnAgentSettingsMechanismGaps(input.agentId, input.agentSettings);
 	}
 	const created = await updateRuntimeWorkspaceState(runtimeClient, workspaceRepoPath, (state) => {
@@ -588,7 +595,6 @@ async function updateTaskCommand(input: {
 	const workspaceId = await ensureRuntimeWorkspace(workspaceRepoPath);
 	const runtimeClient = createRuntimeTrpcClient(workspaceId);
 	let mergedAgentSettings: RuntimeTaskAgentSettings | null | undefined;
-	let effectiveAgentIdForWarning: RuntimeAgentId | null | undefined;
 	const updated = await updateRuntimeWorkspaceState(runtimeClient, workspaceRepoPath, (runtimeState) => {
 		const taskRecord = findTaskRecord(runtimeState, input.taskId);
 		if (!taskRecord) {
@@ -600,7 +606,6 @@ async function updateTaskCommand(input: {
 			reasoningEffort: input.reasoningEffort,
 		});
 		mergedAgentSettings = agentSettings;
-		effectiveAgentIdForWarning = input.agentId === undefined ? taskRecord.task.agentId : input.agentId;
 
 		const updatedTask = updateTask(runtimeState.board, input.taskId, {
 			title: input.title ?? taskRecord.task.title,
@@ -627,8 +632,8 @@ async function updateTaskCommand(input: {
 		};
 	});
 
-	if (effectiveAgentIdForWarning && mergedAgentSettings) {
-		warnOnAgentSettingsMechanismGaps(effectiveAgentIdForWarning, mergedAgentSettings);
+	if (shouldWarnOnExplicitAgentId(input.agentId)) {
+		warnOnAgentSettingsMechanismGaps(input.agentId, mergedAgentSettings ?? undefined);
 	}
 
 	return {

@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { buildTaskAgentSettingsForUpdate } from "../../../src/commands/task";
 import { prepareAgentLaunch } from "../../../src/terminal/agent-session-adapters";
 
 const originalHome = process.env.HOME;
@@ -982,6 +983,24 @@ describe("per-task agentSettings overrides", () => {
 		expect(launch.args.filter((arg) => arg === "--model")).toHaveLength(1);
 		const modelFlag = launch.args.indexOf("--model");
 		expect(launch.args[modelFlag + 1]).toBe("task-pinned-model");
+	});
+
+	it("omits --model after task update --model default clears the card setting", async () => {
+		const cleared = buildTaskAgentSettingsForUpdate({ modelId: SENTINEL.modelId }, { modelId: null });
+		expect(cleared).toBeNull();
+
+		setupTempHome();
+		const launch = await prepareAgentLaunch({
+			taskId: "task-1",
+			agentId: "claude",
+			binary: "claude",
+			args: [],
+			cwd: "/tmp",
+			prompt: "",
+			agentSettings: cleared ?? undefined,
+		});
+
+		expect(launch.args).not.toContain("--model");
 	});
 
 	it("kiro: emits a visible session warning when settings are present; none when absent", async () => {

@@ -5,6 +5,7 @@ import {
 	buildTaskAgentSettingsForUpdate,
 	formatTaskAgentSettings,
 	resolveSettingsFlag,
+	shouldWarnOnExplicitAgentId,
 	warnOnAgentSettingsMechanismGaps,
 } from "../../src/commands/task";
 import type { RuntimeTaskAgentSettings } from "../../src/core/api-contract";
@@ -91,6 +92,14 @@ describe("buildTaskAgentSettingsForUpdate", () => {
 		expect(buildTaskAgentSettingsForUpdate(undefined, { reasoningEffort: "MAXIMUM_OVERDRIVE" })).toEqual({
 			reasoningEffort: "MAXIMUM_OVERDRIVE",
 		});
+	});
+});
+
+describe("shouldWarnOnExplicitAgentId", () => {
+	it("is true only when the command names an agent", () => {
+		expect(shouldWarnOnExplicitAgentId("kiro")).toBe(true);
+		expect(shouldWarnOnExplicitAgentId(undefined)).toBe(false);
+		expect(shouldWarnOnExplicitAgentId(null)).toBe(false);
 	});
 });
 
