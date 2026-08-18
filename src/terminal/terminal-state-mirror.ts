@@ -5,14 +5,12 @@ const { SerializeAddon } = serializeAddonModule as typeof import("@xterm/addon-s
 const { Terminal } = headlessTerminalModule as typeof import("@xterm/headless");
 
 /**
- * Server-side headless terminal scrollback.
+ * Server-side headless terminal buffer cap (1,000 lines).
  *
- * Kept deliberately small because the entire buffer is serialized via
- * `serializeAddon.serialize()` and shipped over the WebSocket on every
- * viewer connect (task switch). A 10,000-line buffer caused ~60s main-thread
- * freezes (#581) and RSS spikes toward OOM (#273) during long agent runs.
- * 1,000 lines is enough to show recent output while keeping the restore
- * snapshot ~10x smaller.
+ * Restore serves a cached full `serialize()` of this buffer, not a viewport-only
+ * slice. Output and resize mark the cache dirty; connect does not serialize on
+ * every keystroke. A 10,000-line buffer caused ~60s main-thread freezes (#581)
+ * and RSS spikes toward OOM (#273) during long agent runs.
  */
 const TERMINAL_SCROLLBACK = 1_000;
 
@@ -30,6 +28,8 @@ export class TerminalStateMirror {
 	private readonly terminal: InstanceType<typeof Terminal>;
 	private readonly serializeAddon = new SerializeAddon();
 	private operationQueue: Promise<void> = Promise.resolve();
+	private snapshotDirty = true;
+	private cachedSnapshot: TerminalRestoreSnapshot | null = null;
 
 	constructor(cols: number, rows: number, options: TerminalStateMirrorOptions = {}) {
 		this.terminal = new Terminal({
@@ -50,6 +50,7 @@ export class TerminalStateMirror {
 			() =>
 				new Promise<void>((resolve) => {
 					this.terminal.write(chunkCopy, () => {
+						this.snapshotDirty = true;
 						resolve();
 					});
 				}),
@@ -62,16 +63,23 @@ export class TerminalStateMirror {
 		}
 		this.enqueueOperation(() => {
 			this.terminal.resize(cols, rows);
+			this.snapshotDirty = true;
 		});
 	}
 
 	async getSnapshot(): Promise<TerminalRestoreSnapshot> {
 		await this.operationQueue;
-		return {
+		if (!this.snapshotDirty && this.cachedSnapshot) {
+			return this.cachedSnapshot;
+		}
+		// Full serialize of the 1k buffer. Callers must not pass { scrollback: 0 }.
+		this.cachedSnapshot = {
 			snapshot: this.serializeAddon.serialize(),
 			cols: this.terminal.cols,
 			rows: this.terminal.rows,
 		};
+		this.snapshotDirty = false;
+		return this.cachedSnapshot;
 	}
 
 	dispose(): void {
