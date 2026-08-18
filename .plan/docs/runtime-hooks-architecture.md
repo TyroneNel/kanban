@@ -20,6 +20,9 @@ This doc covers the runtime terminal agents:
 2. Codex
 3. Gemini
 4. OpenCode
+5. Droid
+6. Kiro
+7. Pi
 
 It does not cover adding new agents in detail.
 
@@ -94,6 +97,9 @@ Generated files by agent:
 4. Codex
    1. No persistent wrapper script file is generated now.
    2. Codex uses `kanban hooks codex-wrapper` as the wrapper command.
+5. Pi
+   1. Per-task `--session-dir` under `~/.cline/kanban/sessions/pi/<taskId>`.
+   2. Launch uses `kanban hooks pi-wrapper` plus an in-process JSONL watcher.
 
 Generated hook files are written through idempotent text writes. Files only update when content changes.
 

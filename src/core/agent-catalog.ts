@@ -111,6 +111,20 @@ export const RUNTIME_AGENT_CATALOG: RuntimeAgentCatalogEntry[] = [
 		},
 	},
 	{
+		id: "pi",
+		label: "Pi",
+		binary: "pi",
+		baseArgs: [],
+		autonomousArgs: [],
+		installUrl: "https://pi.dev/",
+		capabilities: {
+			modelOverride: "flag",
+			effortOverride: "flag",
+			providerOverride: "flag",
+			docsUrl: "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/usage.md",
+		},
+	},
+	{
 		id: "gemini",
 		label: "Gemini CLI",
 		binary: "gemini",
@@ -134,6 +148,7 @@ export const RUNTIME_LAUNCH_SUPPORTED_AGENT_IDS: readonly RuntimeAgentId[] = [
 	"codex",
 	"droid",
 	"kiro",
+	"pi",
 	// "opencode",
 	// "gemini",
 ];
@@ -150,4 +165,9 @@ export function getRuntimeLaunchSupportedAgentCatalog(): RuntimeAgentCatalogEntr
 
 export function getRuntimeAgentCatalogEntry(agentId: RuntimeAgentId): RuntimeAgentCatalogEntry | null {
 	return RUNTIME_AGENT_CATALOG.find((entry) => entry.id === agentId) ?? null;
+}
+
+/** Core Pi has no plan mode; other launch-supported CLIs do or emulate it. */
+export function runtimeAgentSupportsPlanMode(agentId: RuntimeAgentId | null | undefined): boolean {
+	return agentId !== "pi";
 }
