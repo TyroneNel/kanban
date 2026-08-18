@@ -8,6 +8,13 @@ import type { ClineChatMessage } from "@/hooks/use-cline-chat-session";
 import type { RuntimeTaskHookActivity, RuntimeTaskSessionSummary } from "@/runtime/types";
 import { resetWorkspaceMetadataStore, setTaskWorkspaceSnapshot } from "@/stores/workspace-metadata-store";
 
+const virtuosoLastProps = vi.hoisted(() => ({
+	current: null as {
+		followOutput?: boolean | string;
+		atBottomThreshold?: number;
+	} | null,
+}));
+
 vi.mock("react-virtuoso", () => ({
 	Virtuoso: ({
 		data,
@@ -16,6 +23,8 @@ vi.mock("react-virtuoso", () => ({
 		context,
 		className,
 		style,
+		followOutput,
+		atBottomThreshold,
 	}: {
 		data: unknown[];
 		itemContent: (index: number, item: unknown) => React.ReactNode;
@@ -23,14 +32,19 @@ vi.mock("react-virtuoso", () => ({
 		context?: unknown;
 		className?: string;
 		style?: React.CSSProperties;
-	}) => (
-		<div className={`overflow-y-auto ${className ?? ""}`} style={style}>
-			{data.map((item, index) => (
-				<div key={index}>{itemContent(index, item)}</div>
-			))}
-			{components?.Footer ? <components.Footer context={context} /> : null}
-		</div>
-	),
+		followOutput?: boolean | string;
+		atBottomThreshold?: number;
+	}) => {
+		virtuosoLastProps.current = { followOutput, atBottomThreshold };
+		return (
+			<div className={`overflow-y-auto ${className ?? ""}`} style={style}>
+				{data.map((item, index) => (
+					<div key={index}>{itemContent(index, item)}</div>
+				))}
+				{components?.Footer ? <components.Footer context={context} /> : null}
+			</div>
+		);
+	},
 }));
 
 function createSummary(
@@ -403,6 +417,8 @@ describe("ClineAgentChatPanel", () => {
 
 		expect(container.textContent).toContain("First reply");
 		expect(container.textContent).toContain("Second reply");
+		expect(virtuosoLastProps.current?.followOutput).toBe(true);
+		expect(virtuosoLastProps.current?.atBottomThreshold).toBe(24);
 	});
 
 	it("renders all messages across multiple content updates", async () => {
