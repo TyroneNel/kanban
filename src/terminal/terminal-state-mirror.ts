@@ -18,6 +18,7 @@ export interface TerminalRestoreSnapshot {
 	snapshot: string;
 	cols: number;
 	rows: number;
+	restoreGeneration?: number;
 }
 
 interface TerminalStateMirrorOptions {
