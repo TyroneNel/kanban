@@ -14,14 +14,12 @@ const TERMINAL_FONT_FAMILY =
 	"'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'SF Mono', Menlo, Monaco, 'Courier New', monospace";
 
 /**
- * Browser xterm scrollback.
+ * Browser display cap for the last 1,000 lines.
  *
- * Must stay in sync with the server-side `TERMINAL_SCROLLBACK` in
- * `src/terminal/terminal-state-mirror.ts`. On every task switch the browser
- * receives a full `restore` snapshot and does `terminal.reset()` +
- * `terminal.write(snapshot)`. A 10,000-line scrollback made this write block
- * the main thread for ~60s during long agent runs (#581). 1,000 lines keeps
- * recent output visible while capping the restore cost at ~10x smaller.
+ * This is the room the client needs to hold a full 1k restore snapshot.
+ * It is not a second restore-size cap, and it does not have to match the
+ * server buffer in order to shrink the payload. Restore is a cached full
+ * serialize applied in 16 KiB writes; warm reconnects can skip reset.
  */
 const TERMINAL_SCROLLBACK = 1_000;
 
