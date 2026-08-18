@@ -45,6 +45,8 @@ type SettingsSection = "shortcuts";
 type CreateShortcutResult = { ok: boolean; message?: string };
 
 const MOBILE_TOUCH_TARGET = "min-w-[44px] min-h-[44px]";
+const HOME_GIT_MENU_ITEM_CLASS =
+	"flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-[13px] text-text-primary outline-none data-[disabled]:cursor-not-allowed data-[highlighted]:bg-surface-3 data-[disabled]:opacity-50";
 
 function getWorkspacePathSegments(path: string): string[] {
 	return path
@@ -202,7 +204,7 @@ function HomeGitSyncMenu({
 					className="z-50 min-w-[160px] rounded-md border border-border-bright bg-surface-1 p-1 shadow-lg"
 				>
 					<DropdownMenu.Item
-						className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-[13px] text-text-primary outline-none data-[disabled]:cursor-not-allowed data-[highlighted]:bg-surface-3 data-[disabled]:opacity-50"
+						className={HOME_GIT_MENU_ITEM_CLASS}
 						disabled={runningGitAction === "fetch"}
 						onSelect={onGitFetch}
 					>
@@ -210,7 +212,7 @@ function HomeGitSyncMenu({
 						Fetch
 					</DropdownMenu.Item>
 					<DropdownMenu.Item
-						className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-[13px] text-text-primary outline-none data-[disabled]:cursor-not-allowed data-[highlighted]:bg-surface-3 data-[disabled]:opacity-50"
+						className={HOME_GIT_MENU_ITEM_CLASS}
 						disabled={runningGitAction === "pull"}
 						onSelect={onGitPull}
 					>
@@ -219,7 +221,7 @@ function HomeGitSyncMenu({
 						<span className="text-text-tertiary">{pullCount}</span>
 					</DropdownMenu.Item>
 					<DropdownMenu.Item
-						className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-[13px] text-text-primary outline-none data-[disabled]:cursor-not-allowed data-[highlighted]:bg-surface-3 data-[disabled]:opacity-50"
+						className={HOME_GIT_MENU_ITEM_CLASS}
 						disabled={runningGitAction === "push"}
 						onSelect={onGitPush}
 					>
