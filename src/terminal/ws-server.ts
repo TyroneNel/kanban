@@ -1,8 +1,8 @@
 import type { IncomingMessage, Server } from "node:http";
 import type { Socket } from "node:net";
 
-import type { RawData, WebSocket } from "ws";
-import { WebSocketServer } from "ws";
+import type { RawData } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 
 import type { RuntimeTerminalWsServerMessage } from "../core/api-contract";
 import { parseTerminalWsClientMessage } from "../core/api-validation";
@@ -34,6 +34,11 @@ export interface CreateTerminalWebSocketBridgeRequest {
 	 * @returns true if the request is authenticated, false otherwise.
 	 */
 	validateUpgradeSession?: (cookieHeader: string | undefined) => boolean;
+	/**
+	 * Interval between viewer liveness pings. Defaults to
+	 * TERMINAL_WS_HEARTBEAT_INTERVAL_MS. Exposed so tests can use a short interval.
+	 */
+	heartbeatIntervalMs?: number;
 }
 
 export interface TerminalWebSocketBridge {
@@ -81,6 +86,7 @@ const OUTPUT_BUFFER_LOW_WATER_MARK_BYTES = Math.floor(OUTPUT_BUFFER_HIGH_WATER_M
 const OUTPUT_ACK_HIGH_WATER_MARK_BYTES = 100_000;
 const OUTPUT_ACK_LOW_WATER_MARK_BYTES = 5_000;
 const OUTPUT_RESUME_CHECK_INTERVAL_MS = 16;
+const TERMINAL_WS_HEARTBEAT_INTERVAL_MS = 30_000;
 
 function getWebSocketTransportSocket(ws: WebSocket): Socket | null {
 	const transportSocket = (ws as WebSocket & { _socket?: Socket })._socket;
@@ -125,12 +131,53 @@ function getTerminalClientId(url: URL): string {
 	return url.searchParams.get("clientId")?.trim() || "legacy";
 }
 
+// Browser viewer sockets can die without a clean close (laptop lid, dropped SSH
+// tunnel, killed browser). The ws library then keeps them OPEN indefinitely, and
+// while such a zombie viewer is backpressured it holds pauseOutput() on the shared
+// PTY forever, which blocks the agent process on its stdout writes.
+//
+// Ping every viewer periodically and terminate any socket that misses a pong. The
+// normal close handlers then run and release the viewer's backpressure claim.
+function startWebSocketHeartbeat(wss: WebSocketServer, intervalMs: number): () => void {
+	const aliveSockets = new WeakSet<WebSocket>();
+	const onConnection = (client: WebSocket) => {
+		aliveSockets.add(client);
+		client.on("pong", () => {
+			aliveSockets.add(client);
+		});
+	};
+	wss.on("connection", onConnection);
+	const timer = setInterval(() => {
+		for (const client of wss.clients) {
+			if (client.readyState !== WebSocket.OPEN) {
+				continue;
+			}
+			if (!aliveSockets.has(client)) {
+				client.terminate();
+				continue;
+			}
+			aliveSockets.delete(client);
+			try {
+				client.ping();
+			} catch {
+				client.terminate();
+			}
+		}
+	}, intervalMs);
+	timer.unref();
+	return () => {
+		clearInterval(timer);
+		wss.off("connection", onConnection);
+	};
+}
+
 export function createTerminalWebSocketBridge({
 	server,
 	resolveTerminalManager,
 	isTerminalIoWebSocketPath,
 	isTerminalControlWebSocketPath,
 	validateUpgradeSession,
+	heartbeatIntervalMs,
 }: CreateTerminalWebSocketBridgeRequest): TerminalWebSocketBridge {
 	const activeSockets = new Set<Socket>();
 	const terminalStreamStates = new Map<string, TerminalStreamState>();
@@ -144,6 +191,9 @@ export function createTerminalWebSocketBridge({
 
 	const ioServer = new WebSocketServer({ noServer: true });
 	const controlServer = new WebSocketServer({ noServer: true });
+	const resolvedHeartbeatIntervalMs = heartbeatIntervalMs ?? TERMINAL_WS_HEARTBEAT_INTERVAL_MS;
+	const stopIoHeartbeat = startWebSocketHeartbeat(ioServer, resolvedHeartbeatIntervalMs);
+	const stopControlHeartbeat = startWebSocketHeartbeat(controlServer, resolvedHeartbeatIntervalMs);
 
 	const getOrCreateTerminalStreamState = (connectionKey: string): TerminalStreamState => {
 		const existing = terminalStreamStates.get(connectionKey);
@@ -558,6 +608,8 @@ export function createTerminalWebSocketBridge({
 
 	return {
 		close: async () => {
+			stopIoHeartbeat();
+			stopControlHeartbeat();
 			for (const client of ioServer.clients) {
 				try {
 					client.terminate();
