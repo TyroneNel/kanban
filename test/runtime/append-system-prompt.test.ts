@@ -168,4 +168,18 @@ describe("resolveHomeAgentAppendSystemPrompt", () => {
 		expect(prompt).toContain("kiro-cli mcp add --name linear --url https://mcp.linear.app/mcp --scope global");
 		expect(prompt).not.toContain("--scope user");
 	});
+
+	it("returns active-agent guidance for pi home sidebar sessions", () => {
+		const prompt = resolveHomeAgentAppendSystemPrompt("__home_agent__:workspace-1:pi", {
+			currentVersion: "0.1.10",
+			cwd: "/Users/example/repo",
+			execPath: "/usr/local/bin/node",
+			execArgv: [],
+			argv: ["node", "/Users/example/repo/dist/cli.js"],
+			resolveRealPath: (path) => path,
+		});
+		expect(prompt).toContain("Current home agent: `pi`");
+		expect(prompt).toContain("Pi MCP extension");
+		expect(prompt).toContain("/login");
+	});
 });
