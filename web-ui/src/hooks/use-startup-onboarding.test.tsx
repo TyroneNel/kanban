@@ -43,6 +43,15 @@ function createRuntimeConfigResponse(selectedAgentId: RuntimeConfigResponse["sel
 				installed: true,
 				configured: selectedAgentId === "grok",
 			},
+			{
+				id: "pi",
+				label: "Pi",
+				binary: "pi",
+				command: "pi",
+				defaultArgs: [],
+				installed: true,
+				configured: selectedAgentId === "pi",
+			},
 		],
 		shortcuts: [],
 		clineProviderSettings: {
@@ -179,6 +188,10 @@ describe("useStartupOnboarding", () => {
 		const grokResult = await snapshot.handleSelectOnboardingAgent("grok");
 		expect(grokResult).toEqual({ ok: true });
 		expect(saveRuntimeConfigMock).toHaveBeenCalledWith(null, { selectedAgentId: "grok" });
+
+		const piResult = await snapshot.handleSelectOnboardingAgent("pi");
+		expect(piResult).toEqual({ ok: true });
+		expect(saveRuntimeConfigMock).toHaveBeenCalledWith(null, { selectedAgentId: "pi" });
 	});
 
 	it("waits for runtime config to finish loading before opening onboarding", async () => {
