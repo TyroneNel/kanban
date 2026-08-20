@@ -63,6 +63,12 @@ export interface CreateTerminalWebSocketBridgeRequest {
 	 * Exposed so tests can use a small budget.
 	 */
 	viewerPendingBudgetBytes?: number;
+	/**
+	 * How many consecutive forced re-restores a viewer may receive before it is
+	 * terminated instead. Defaults to OUTPUT_VIEWER_FORCED_RESTORE_LIMIT.
+	 * Exposed so tests can use a small limit.
+	 */
+	forcedRestoreLimit?: number;
 }
 
 export interface TerminalWebSocketBridge {
@@ -86,6 +92,10 @@ interface TerminalViewerState {
 	pendingOutputChunks: Buffer[];
 	pendingOutputBytes: number;
 	restoreComplete: boolean;
+	// Consecutive forced re-restores since the viewer last completed one. A viewer
+	// that keeps overflowing without ever finishing restore is terminated after a
+	// small number of attempts instead of being re-restored forever.
+	forcedRestoreCount: number;
 	ioState: IoOutputState | null;
 	ioSocket: WebSocket | null;
 	controlSocket: WebSocket | null;
@@ -133,6 +143,13 @@ const OUTPUT_VIEWER_PAUSE_BUDGET_MS = 2_000;
 // in runtime memory. Cap that buffer so a stuck viewer cannot leak memory without
 // bound; on overflow it gets a fresh restore instead.
 const OUTPUT_VIEWER_PENDING_BUDGET_BYTES = 512 * 1024;
+// A forced re-restore clears outputPaused and the ack-stall timer, so a viewer
+// that never completes restore would otherwise re-trigger the pending budget and
+// be re-restored forever: the ack-stall watchdog needs outputPaused to fire, and
+// the heartbeat cannot see a backgrounded tab (it still pongs). Cap consecutive
+// forced re-restores; past the limit, terminate the viewer exactly like the
+// ack-stall watchdog does.
+const OUTPUT_VIEWER_FORCED_RESTORE_LIMIT = 3;
 
 function getWebSocketTransportSocket(ws: WebSocket): Socket | null {
 	const transportSocket = (ws as WebSocket & { _socket?: Socket })._socket;
@@ -228,6 +245,7 @@ export function createTerminalWebSocketBridge({
 	viewerPauseBudgetBytes,
 	viewerPauseBudgetMs,
 	viewerPendingBudgetBytes,
+	forcedRestoreLimit,
 }: CreateTerminalWebSocketBridgeRequest): TerminalWebSocketBridge {
 	const activeSockets = new Set<Socket>();
 	const terminalStreamStates = new Map<string, TerminalStreamState>();
@@ -246,6 +264,7 @@ export function createTerminalWebSocketBridge({
 	const resolvedViewerPauseBudgetBytes = viewerPauseBudgetBytes ?? OUTPUT_VIEWER_PAUSE_BUDGET_BYTES;
 	const resolvedViewerPauseBudgetMs = viewerPauseBudgetMs ?? OUTPUT_VIEWER_PAUSE_BUDGET_MS;
 	const resolvedViewerPendingBudgetBytes = viewerPendingBudgetBytes ?? OUTPUT_VIEWER_PENDING_BUDGET_BYTES;
+	const resolvedForcedRestoreLimit = forcedRestoreLimit ?? OUTPUT_VIEWER_FORCED_RESTORE_LIMIT;
 	const stopIoHeartbeat = startWebSocketHeartbeat(ioServer, resolvedHeartbeatIntervalMs);
 	const stopControlHeartbeat = startWebSocketHeartbeat(controlServer, resolvedHeartbeatIntervalMs);
 
@@ -283,6 +302,7 @@ export function createTerminalWebSocketBridge({
 			pendingOutputChunks: [],
 			pendingOutputBytes: 0,
 			restoreComplete: false,
+			forcedRestoreCount: 0,
 			ioState: null,
 			ioSocket: null,
 			controlSocket: null,
@@ -598,6 +618,16 @@ export function createTerminalWebSocketBridge({
 		if (wasBackpressured && streamState.backpressuredViewerIds.size === 0) {
 			terminalManager.resumeOutput(taskId);
 		}
+		if (viewerState.forcedRestoreCount >= resolvedForcedRestoreLimit) {
+			// Every re-restore attempt so far ended with this viewer still unable to
+			// complete restore, so it cannot recover and must not keep generating
+			// snapshot work forever. Fall back to the ack-stall watchdog's behavior:
+			// terminate the io socket and let the normal close path clean up. A
+			// returning tab reconnects and gets a fresh restore.
+			viewerState.ioSocket?.terminate();
+			return;
+		}
+		viewerState.forcedRestoreCount += 1;
 		sendRestoreToViewer(viewerState, taskId, terminalManager, true);
 	};
 
@@ -731,6 +761,7 @@ export function createTerminalWebSocketBridge({
 		viewerState.restoreComplete = false;
 		viewerState.pendingOutputChunks = [];
 		viewerState.pendingOutputBytes = 0;
+		viewerState.forcedRestoreCount = 0;
 		viewerState.controlSocket = ws;
 		ensureOutputListener(streamState, taskId, terminalManager);
 		viewerState.detachControlListener?.();
@@ -781,6 +812,9 @@ export function createTerminalWebSocketBridge({
 
 			if (message.type === "restore_complete") {
 				viewerState.restoreComplete = true;
+				// A completed restore is genuine progress: the viewer recovered, so a
+				// much later unrelated overflow must not count against earlier ones.
+				viewerState.forcedRestoreCount = 0;
 				viewerState.flushPendingOutput();
 			}
 		});

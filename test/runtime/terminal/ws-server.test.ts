@@ -1059,4 +1059,170 @@ describe("createTerminalWebSocketBridge", () => {
 			});
 		}
 	});
+
+	it("terminates a permanently frozen viewer after the forced re-restore limit", async () => {
+		// A forced re-restore clears outputPaused and the ack-stall timer, so a
+		// viewer that never completes restore again would otherwise trip the pending
+		// budget and be re-restored forever: neither existing safety net can stop
+		// that loop (heartbeat is far away, and the watchdog needs outputPaused).
+		// The cap must terminate it instead.
+		const forcedRestoreLimit = 2;
+		const frozenManager = new FakeTerminalManager();
+		const frozenServer = createServer((_request, response) => {
+			response.writeHead(404);
+			response.end();
+		});
+		const frozenBridge = createTerminalWebSocketBridge({
+			server: frozenServer,
+			resolveTerminalManager: (workspaceId) => (workspaceId === WORKSPACE_ID ? frozenManager : null),
+			isTerminalIoWebSocketPath: (pathname) => pathname === "/api/terminal/io",
+			isTerminalControlWebSocketPath: (pathname) => pathname === "/api/terminal/control",
+			heartbeatIntervalMs: 60_000,
+			ackStallTimeoutMs: 60_000,
+			viewerPauseBudgetMs: 100,
+			viewerPendingBudgetBytes: 8 * 1024,
+			forcedRestoreLimit,
+		});
+		frozenServer.listen(0, "127.0.0.1");
+		await once(frozenServer, "listening");
+		const frozenAddress = frozenServer.address() as AddressInfo | null;
+		if (!frozenAddress) {
+			throw new Error("Expected websocket server address.");
+		}
+		setKanbanRuntimePort(frozenAddress.port);
+		const frozenUrl = `ws://127.0.0.1:${frozenAddress.port}`;
+
+		let ioSocket: QueuedWebSocket | null = null;
+		let controlSocket: QueuedWebSocket | null = null;
+		try {
+			const ioUrl = `${frozenUrl}/api/terminal/io?taskId=${TASK_ID}&workspaceId=${WORKSPACE_ID}&clientId=frozen`;
+			const controlUrl = `${frozenUrl}/api/terminal/control?taskId=${TASK_ID}&workspaceId=${WORKSPACE_ID}&clientId=frozen`;
+
+			ioSocket = await openQueuedWebSocket(ioUrl);
+			controlSocket = await openQueuedWebSocket(controlUrl);
+
+			await waitForControlMessage(controlSocket, (message) => message.type === "restore");
+			// Complete the initial restore once so this viewer can be backpressured
+			// and actually pause the PTY; after this it never acks and never
+			// completes another restore, like a permanently frozen tab.
+			controlSocket.socket.send(JSON.stringify({ type: "restore_complete" }));
+			// Let restore_complete land before emitting: with the tiny pending budget,
+			// output that reached the pending buffer first would itself trip a
+			// re-restore before this viewer could ever pause the PTY.
+			await new Promise((resolve) => setTimeout(resolve, 20));
+
+			frozenManager.emitOutput(TASK_ID, "x".repeat(120_000));
+			await waitForAssertion(() => {
+				expect(frozenManager.pauseOutput).toHaveBeenCalledTimes(1);
+			});
+
+			// Feed output until the viewer is terminated or the loop gives up.
+			for (let iteration = 0; iteration < 10 && ioSocket.socket.readyState !== WebSocket.CLOSED; iteration++) {
+				frozenManager.emitOutput(TASK_ID, "x".repeat(32 * 1024));
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+
+			await waitForAssertion(() => {
+				expect(ioSocket?.socket.readyState).toBe(WebSocket.CLOSED);
+			}, 3_000);
+
+			// The initial connect restore plus at most one forced attempt per unit of
+			// limit; after that the viewer is terminated, not re-restored again.
+			const forcedRestores = controlSocket.queue.filter((rawData) => {
+				const message = JSON.parse(rawDataToBuffer(rawData).toString("utf8")) as RuntimeTerminalWsServerMessage;
+				return message.type === "restore";
+			});
+			expect(forcedRestores.length).toBeLessThanOrEqual(forcedRestoreLimit);
+			// The viewer's backpressure claim was released, so the PTY is not left paused.
+			expect(frozenManager.resumeOutput).toHaveBeenCalled();
+		} finally {
+			for (const queued of [ioSocket, controlSocket]) {
+				if (queued && queued.socket.readyState !== WebSocket.CLOSED) {
+					queued.socket.terminate();
+				}
+			}
+			await frozenBridge.close();
+			await new Promise<void>((resolve, reject) => {
+				frozenServer.close((error) => {
+					if (error) {
+						reject(error);
+						return;
+					}
+					resolve();
+				});
+			});
+		}
+	});
+
+	it("resets the forced re-restore counter when a viewer recovers", async () => {
+		// Regression guard: two overflows separated by a successful restore must not
+		// be summed toward the limit. With forcedRestoreLimit of 1, a viewer whose
+		// counter was not reset would be terminated on the second overflow.
+		const recoveringManager = new FakeTerminalManager();
+		const recoveringServer = createServer((_request, response) => {
+			response.writeHead(404);
+			response.end();
+		});
+		const recoveringBridge = createTerminalWebSocketBridge({
+			server: recoveringServer,
+			resolveTerminalManager: (workspaceId) => (workspaceId === WORKSPACE_ID ? recoveringManager : null),
+			isTerminalIoWebSocketPath: (pathname) => pathname === "/api/terminal/io",
+			isTerminalControlWebSocketPath: (pathname) => pathname === "/api/terminal/control",
+			heartbeatIntervalMs: 60_000,
+			ackStallTimeoutMs: 60_000,
+			viewerPauseBudgetMs: 100,
+			forcedRestoreLimit: 1,
+		});
+		recoveringServer.listen(0, "127.0.0.1");
+		await once(recoveringServer, "listening");
+		const recoveringAddress = recoveringServer.address() as AddressInfo | null;
+		if (!recoveringAddress) {
+			throw new Error("Expected websocket server address.");
+		}
+		setKanbanRuntimePort(recoveringAddress.port);
+		const recoveringUrl = `ws://127.0.0.1:${recoveringAddress.port}`;
+
+		let ioSocket: QueuedWebSocket | null = null;
+		let controlSocket: QueuedWebSocket | null = null;
+		try {
+			const ioUrl = `${recoveringUrl}/api/terminal/io?taskId=${TASK_ID}&workspaceId=${WORKSPACE_ID}&clientId=recovering`;
+			const controlUrl = `${recoveringUrl}/api/terminal/control?taskId=${TASK_ID}&workspaceId=${WORKSPACE_ID}&clientId=recovering`;
+
+			ioSocket = await openQueuedWebSocket(ioUrl);
+			controlSocket = await openQueuedWebSocket(controlUrl);
+
+			await waitForControlMessage(controlSocket, (message) => message.type === "restore");
+			controlSocket.socket.send(JSON.stringify({ type: "restore_complete" }));
+
+			// First overflow: stall past the pause budget without acking.
+			recoveringManager.emitOutput(TASK_ID, "x".repeat(120_000));
+			await waitForControlMessage(controlSocket, (message) => message.type === "restore");
+
+			// The viewer recovers.
+			controlSocket.socket.send(JSON.stringify({ type: "restore_complete" }));
+
+			// Second, unrelated overflow later on.
+			recoveringManager.emitOutput(TASK_ID, "y".repeat(120_000));
+			await waitForControlMessage(controlSocket, (message) => message.type === "restore", 3_000);
+
+			expect(ioSocket.socket.readyState).toBe(WebSocket.OPEN);
+			expect(recoveringManager.resumeOutput).toHaveBeenCalledTimes(2);
+		} finally {
+			for (const queued of [ioSocket, controlSocket]) {
+				if (queued && queued.socket.readyState !== WebSocket.CLOSED) {
+					queued.socket.terminate();
+				}
+			}
+			await recoveringBridge.close();
+			await new Promise<void>((resolve, reject) => {
+				recoveringServer.close((error) => {
+					if (error) {
+						reject(error);
+						return;
+					}
+					resolve();
+				});
+			});
+		}
+	});
 });
