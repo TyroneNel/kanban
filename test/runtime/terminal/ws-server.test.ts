@@ -512,4 +512,83 @@ describe("createTerminalWebSocketBridge", () => {
 		expect(restoreB).toMatchObject({ type: "restore", restoreGeneration: 2 });
 		await closeSocket(second.socket);
 	});
+
+	it("terminates an unresponsive viewer and releases its PTY backpressure", async () => {
+		const heartbeatManager = new FakeTerminalManager();
+		const heartbeatServer = createServer((_request, response) => {
+			response.writeHead(404);
+			response.end();
+		});
+		const heartbeatBridge = createTerminalWebSocketBridge({
+			server: heartbeatServer,
+			resolveTerminalManager: (workspaceId) => (workspaceId === WORKSPACE_ID ? heartbeatManager : null),
+			isTerminalIoWebSocketPath: (pathname) => pathname === "/api/terminal/io",
+			isTerminalControlWebSocketPath: (pathname) => pathname === "/api/terminal/control",
+			heartbeatIntervalMs: 50,
+		});
+		heartbeatServer.listen(0, "127.0.0.1");
+		await once(heartbeatServer, "listening");
+		const heartbeatAddress = heartbeatServer.address() as AddressInfo | null;
+		if (!heartbeatAddress) {
+			throw new Error("Expected websocket server address.");
+		}
+		setKanbanRuntimePort(heartbeatAddress.port);
+		const heartbeatUrl = `ws://127.0.0.1:${heartbeatAddress.port}`;
+
+		let ioSocket: WebSocket | null = null;
+		let controlSocket: WebSocket | null = null;
+		try {
+			const ioUrl = `${heartbeatUrl}/api/terminal/io?taskId=${TASK_ID}&workspaceId=${WORKSPACE_ID}&clientId=zombie`;
+			const controlUrl = `${heartbeatUrl}/api/terminal/control?taskId=${TASK_ID}&workspaceId=${WORKSPACE_ID}&clientId=zombie`;
+
+			// Zombie viewer: connected, but never acks output and never replies to pings.
+			ioSocket = new WebSocket(ioUrl, { autoPong: false });
+			await once(ioSocket, "open");
+			controlSocket = new WebSocket(controlUrl, { autoPong: false });
+			// Register before "open" resolves: the server sends restore immediately.
+			const restoreReceived = new Promise<void>((resolve) => {
+				controlSocket?.on("message", (message) => {
+					const parsed = JSON.parse(rawDataToBuffer(message).toString("utf8")) as RuntimeTerminalWsServerMessage;
+					if (parsed.type === "restore") {
+						resolve();
+					}
+				});
+			});
+			await once(controlSocket, "open");
+			await restoreReceived;
+			controlSocket.send(JSON.stringify({ type: "restore_complete" }));
+
+			const output = "x".repeat(120_000);
+			heartbeatManager.emitOutput(TASK_ID, output);
+			await waitForAssertion(() => {
+				expect(heartbeatManager.pauseOutput).toHaveBeenCalledTimes(1);
+			});
+			expect(heartbeatManager.resumeOutput).not.toHaveBeenCalled();
+
+			// The heartbeat terminates the unresponsive sockets, and the close path
+			// releases the viewer's backpressure claim on the shared PTY.
+			await waitForAssertion(() => {
+				expect(heartbeatManager.resumeOutput).toHaveBeenCalledTimes(1);
+			}, 2_000);
+			await waitForAssertion(() => {
+				expect(ioSocket?.readyState).toBe(WebSocket.CLOSED);
+			}, 2_000);
+		} finally {
+			for (const socket of [ioSocket, controlSocket]) {
+				if (socket && socket.readyState !== WebSocket.CLOSED) {
+					socket.terminate();
+				}
+			}
+			await heartbeatBridge.close();
+			await new Promise<void>((resolve, reject) => {
+				heartbeatServer.close((error) => {
+					if (error) {
+						reject(error);
+						return;
+					}
+					resolve();
+				});
+			});
+		}
+	});
 });
