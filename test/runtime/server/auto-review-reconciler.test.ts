@@ -1,19 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
+import type { ClineTaskSessionService } from "../../../src/cline-sdk/cline-task-session-service";
 import type {
+	RuntimeAgentId,
 	RuntimeBoardCard,
 	RuntimeBoardColumnId,
 	RuntimeBoardData,
 	RuntimeTaskSessionSummary,
-	RuntimeWorkspaceMetadata,
 	RuntimeWorkspaceStateResponse,
 } from "../../../src/core/api-contract";
 import type {
+	AutoReviewTaskProbe,
 	CreateAutoReviewReconcilerDependencies,
 	TaskGitPromptTemplates,
 } from "../../../src/server/auto-review-reconciler";
 import { createAutoReviewReconciler } from "../../../src/server/auto-review-reconciler";
-import type { WorkspaceMetadataMonitor } from "../../../src/server/workspace-metadata-monitor";
 import type { TerminalSessionManager } from "../../../src/terminal/session-manager";
 
 interface StoredWorkspaceState {
@@ -44,19 +44,6 @@ function createBoard(cardsByColumn: Partial<Record<RuntimeBoardColumnId, Runtime
 		})),
 		dependencies: [],
 	};
-}
-
-function findCardInBoard(
-	board: RuntimeBoardData,
-	taskId: string,
-): { card: RuntimeBoardCard; columnId: RuntimeBoardColumnId } | null {
-	for (const column of board.columns) {
-		const card = column.cards.find((candidate) => candidate.id === taskId);
-		if (card) {
-			return { card, columnId: column.id };
-		}
-	}
-	return null;
 }
 
 /**
@@ -105,66 +92,46 @@ function createWorkspaceStateStore(initial: StoredWorkspaceState) {
 	};
 }
 
-function createTaskWorkspaceMetadata(
-	taskId: string,
-	overrides: Partial<{ headCommit: string | null; changedFiles: number | null; exists: boolean }> = {},
-) {
-	return {
-		taskId,
-		path: `/repo/.worktrees/${taskId}`,
-		exists: overrides.exists ?? true,
-		baseRef: "main",
-		branch: null,
-		isDetached: true,
-		headCommit: overrides.headCommit ?? null,
-		changedFiles: overrides.changedFiles ?? null,
-		additions: null,
-		deletions: null,
-		stateVersion: 1,
-	};
-}
-
-function createWorkspaceMetadata(
-	taskWorkspaces: ReturnType<typeof createTaskWorkspaceMetadata>[],
-): RuntimeWorkspaceMetadata {
-	return {
-		homeGitSummary: null,
-		homeGitStateVersion: 0,
-		taskWorkspaces: taskWorkspaces as RuntimeWorkspaceMetadata["taskWorkspaces"],
-	};
-}
-
-function createFakeMonitor() {
-	let metadata: RuntimeWorkspaceMetadata = createWorkspaceMetadata([]);
-	const monitor: WorkspaceMetadataMonitor = {
-		connectWorkspace: vi.fn(async () => metadata),
-		updateWorkspaceState: vi.fn(async () => metadata),
-		disconnectWorkspace: vi.fn(),
-		disposeWorkspace: vi.fn(),
-		close: vi.fn(),
-	};
-	return {
-		monitor,
-		setMetadata(next: RuntimeWorkspaceMetadata) {
-			metadata = next;
-		},
-	};
-}
-
 function createFakeTerminalManager() {
-	const writeInput = vi.fn(
-		(_taskId: string, _data: Buffer) => ({ taskId: _taskId }) as unknown as RuntimeTaskSessionSummary,
+	const unavailableTaskIds = new Set<string>();
+	const writeInput = vi.fn((taskId: string, _data: Buffer) => ({ taskId }) as unknown as RuntimeTaskSessionSummary);
+	const getSummary = vi.fn((taskId: string) =>
+		unavailableTaskIds.has(taskId) ? null : ({ taskId } as unknown as RuntimeTaskSessionSummary),
 	);
 	return {
 		writeInput,
-		manager: { writeInput } as unknown as TerminalSessionManager,
+		getSummary,
+		dropSession: (taskId: string) => {
+			unavailableTaskIds.add(taskId);
+		},
+		manager: { writeInput, getSummary } as unknown as TerminalSessionManager,
+	};
+}
+
+function createFakeClineService() {
+	const sendTaskSessionInput = vi.fn(async (taskId: string, _text: string, _mode?: string) => {
+		await Promise.resolve();
+		return { taskId } as unknown as RuntimeTaskSessionSummary;
+	});
+	const rebindPersistedTaskSession = vi.fn(async () => null);
+	const getSummary = vi.fn((taskId: string) => ({ taskId }) as unknown as RuntimeTaskSessionSummary);
+	return {
+		sendTaskSessionInput,
+		rebindPersistedTaskSession,
+		getSummary,
+		service: {
+			sendTaskSessionInput,
+			rebindPersistedTaskSession,
+			getSummary,
+		} as unknown as ClineTaskSessionService,
 	};
 }
 
 interface HarnessOptions {
 	board: RuntimeBoardData;
 	sessions?: Record<string, RuntimeTaskSessionSummary>;
-	metadata?: RuntimeWorkspaceMetadata;
+	selectedAgentId?: RuntimeAgentId;
+	clineService?: ClineTaskSessionService;
 	promptTemplates?: TaskGitPromptTemplates;
 	now?: () => number;
 }
@@ -175,12 +142,14 @@ function createHarness(options: HarnessOptions) {
 		sessions: options.sessions ?? {},
 		revision: 1,
 	});
-	const fakeMonitor = createFakeMonitor();
-	if (options.metadata) {
-		fakeMonitor.setMetadata(options.metadata);
-	}
+	const probeResults = new Map<string, AutoReviewTaskProbe>();
+	const probeTaskWorkspace = vi.fn(async ({ taskId }: { taskId: string }) => {
+		await Promise.resolve();
+		return probeResults.get(taskId) ?? { exists: false, headCommit: null, changedFiles: 0 };
+	});
 	const terminal = createFakeTerminalManager();
 	const onBoardMutated = vi.fn();
+	const warn = vi.fn();
 	let staleSnapshot: RuntimeWorkspaceStateResponse | null = null;
 
 	const dependencies: CreateAutoReviewReconcilerDependencies = {
@@ -200,10 +169,12 @@ function createHarness(options: HarnessOptions) {
 				commitPromptTemplateDefault: null,
 				openPrPromptTemplateDefault: null,
 			},
+		getSelectedAgentId: async () => options.selectedAgentId ?? null,
+		getClineTaskSessionService: () => options.clineService ?? null,
+		probeTaskWorkspace,
 		onBoardMutated,
-		createMetadataMonitor: () => fakeMonitor.monitor,
 		...(options.now ? { now: options.now } : {}),
-		warn: vi.fn(),
+		warn,
 	};
 
 	const reconciler = createAutoReviewReconciler(dependencies);
@@ -212,8 +183,12 @@ function createHarness(options: HarnessOptions) {
 		reconciler,
 		store,
 		terminal,
+		probeTaskWorkspace,
 		onBoardMutated,
-		fakeMonitor,
+		warn,
+		setProbe(taskId: string, probe: AutoReviewTaskProbe) {
+			probeResults.set(taskId, probe);
+		},
 		setStaleSnapshot(snapshot: RuntimeWorkspaceStateResponse | null) {
 			staleSnapshot = snapshot;
 		},
@@ -234,12 +209,8 @@ describe("auto-review reconciler", () => {
 
 	it("advances a review card with no browser client connected", async () => {
 		const card = createCard({ id: "task-1", autoReviewEnabled: true });
-		const harness = createHarness({
-			board: createBoard({ review: [card] }),
-			metadata: createWorkspaceMetadata([
-				createTaskWorkspaceMetadata("task-1", { headCommit: "commit-1", changedFiles: 3 }),
-			]),
-		});
+		const harness = createHarness({ board: createBoard({ review: [card] }) });
+		harness.setProbe("task-1", { exists: true, headCommit: "commit-1", changedFiles: 3 });
 
 		await harness.evaluate();
 
@@ -262,9 +233,7 @@ describe("auto-review reconciler", () => {
 		expect(harness.terminal.writeInput.mock.calls[1]?.[1]?.toString("utf8")).toBe("\r");
 
 		// HEAD moves once the agent finishes the commit: the card completes.
-		harness.fakeMonitor.setMetadata(
-			createWorkspaceMetadata([createTaskWorkspaceMetadata("task-1", { headCommit: "commit-2", changedFiles: 0 })]),
-		);
+		harness.setProbe("task-1", { exists: true, headCommit: "commit-2", changedFiles: 0 });
 		await harness.evaluate();
 
 		const completed = findCardInBoard(harness.store.stored.board, "task-1");
@@ -284,12 +253,8 @@ describe("auto-review reconciler", () => {
 				attempt: 0,
 			},
 		});
-		const harness = createHarness({
-			board: createBoard({ review: [armedCard] }),
-			metadata: createWorkspaceMetadata([
-				createTaskWorkspaceMetadata("task-1", { headCommit: "commit-2", changedFiles: 0 }),
-			]),
-		});
+		const harness = createHarness({ board: createBoard({ review: [armedCard] }) });
+		harness.setProbe("task-1", { exists: true, headCommit: "commit-2", changedFiles: 0 });
 
 		// A fresh reconciler instance sees only the persisted arming state and
 		// completes the action once HEAD has moved past the recorded commit.
@@ -314,12 +279,10 @@ describe("auto-review reconciler", () => {
 		const harness = createHarness({
 			board: createBoard({ in_progress: interruptedCards }),
 			sessions,
-			metadata: createWorkspaceMetadata(
-				interruptedCards.map((card) =>
-					createTaskWorkspaceMetadata(card.id, { headCommit: "commit-1", changedFiles: 2 }),
-				),
-			),
 		});
+		for (const card of interruptedCards) {
+			harness.setProbe(card.id, { exists: true, headCommit: "commit-1", changedFiles: 2 });
+		}
 
 		await harness.evaluate();
 
@@ -329,21 +292,39 @@ describe("auto-review reconciler", () => {
 			expect(found?.columnId).toBe("in_progress");
 		}
 		expect(harness.store.stored.sessions).toEqual(sessions);
-		// Three interrupted tasks in, three worktrees out: nothing was stopped,
-		// restarted, trashed, or cleaned up.
+		// Three interrupted tasks in, three worktrees out: nothing was probed,
+		// stopped, restarted, trashed, or cleaned up.
+		expect(harness.probeTaskWorkspace).not.toHaveBeenCalled();
 		expect(harness.terminal.writeInput).not.toHaveBeenCalled();
 		expect(harness.store.stored.revision).toBe(1);
-		expect(harness.fakeMonitor.monitor.disposeWorkspace).not.toHaveBeenCalled();
+	});
+
+	it("performs zero git probes for a workspace with no auto-review candidates", async () => {
+		const harness = createHarness({
+			board: createBoard({
+				backlog: [createCard({ id: "task-backlog" })],
+				in_progress: [createCard({ id: "task-running" })],
+				// Enabled=false and missing auto-review config are both non-candidates.
+				review: [
+					createCard({ id: "task-review-disabled", autoReviewEnabled: false }),
+					createCard({ id: "task-review-default" }),
+				],
+			}),
+		});
+		harness.setProbe("task-running", { exists: true, headCommit: "commit-1", changedFiles: 4 });
+		harness.setProbe("task-review-default", { exists: true, headCommit: "commit-1", changedFiles: 4 });
+
+		await harness.evaluate();
+
+		expect(harness.probeTaskWorkspace).not.toHaveBeenCalled();
+		expect(harness.terminal.writeInput).not.toHaveBeenCalled();
+		expect(harness.store.stored.revision).toBe(1);
 	});
 
 	it("starts exactly one git action when two evaluations race", async () => {
 		const card = createCard({ id: "task-1", autoReviewEnabled: true });
-		const harness = createHarness({
-			board: createBoard({ review: [card] }),
-			metadata: createWorkspaceMetadata([
-				createTaskWorkspaceMetadata("task-1", { headCommit: "commit-1", changedFiles: 3 }),
-			]),
-		});
+		const harness = createHarness({ board: createBoard({ review: [card] }) });
+		harness.setProbe("task-1", { exists: true, headCommit: "commit-1", changedFiles: 3 });
 
 		// Both evaluations observed the unarmed board before either persisted the
 		// arming state. The compare-and-set mutation must let only one through.
@@ -356,6 +337,55 @@ describe("auto-review reconciler", () => {
 		const armed = findCardInBoard(harness.store.stored.board, "task-1");
 		expect(armed?.card.pendingGitAction).not.toBeNull();
 		expect(armed?.card.pendingGitAction?.attempt).toBe(0);
+	});
+
+	it("delivers git actions through the native Cline session service", async () => {
+		const cline = createFakeClineService();
+		const card = createCard({ id: "task-1", autoReviewEnabled: true });
+		const harness = createHarness({
+			board: createBoard({ review: [card] }),
+			selectedAgentId: "cline",
+			clineService: cline.service,
+		});
+		harness.setProbe("task-1", { exists: true, headCommit: "commit-1", changedFiles: 3 });
+
+		await harness.evaluate();
+
+		const armed = findCardInBoard(harness.store.stored.board, "task-1");
+		expect(armed?.card.pendingGitAction).not.toBeNull();
+		expect(cline.sendTaskSessionInput).toHaveBeenCalledTimes(1);
+		expect(cline.sendTaskSessionInput).toHaveBeenCalledWith("task-1", "Commit the working changes onto main.", "act");
+		// The terminal path must not be used for native Cline sessions.
+		expect(harness.terminal.writeInput).not.toHaveBeenCalled();
+
+		// Completion still works once HEAD moves.
+		harness.setProbe("task-1", { exists: true, headCommit: "commit-2", changedFiles: 0 });
+		await harness.evaluate();
+
+		const completed = findCardInBoard(harness.store.stored.board, "task-1");
+		expect(completed?.columnId).toBe("trash");
+		expect(completed?.card.pendingGitAction ?? null).toBeNull();
+	});
+
+	it("never arms a native Cline card while no Cline session exists", async () => {
+		const card = createCard({ id: "task-1", autoReviewEnabled: true });
+		const harness = createHarness({
+			board: createBoard({ review: [card] }),
+			selectedAgentId: "cline",
+			// No Cline service exists for the workspace yet.
+		});
+		harness.setProbe("task-1", { exists: true, headCommit: "commit-1", changedFiles: 3 });
+
+		await harness.evaluate();
+
+		expect(findCardInBoard(harness.store.stored.board, "task-1")?.card.pendingGitAction ?? null).toBeNull();
+		expect(harness.warn).toHaveBeenCalledTimes(1);
+		expect(harness.store.stored.revision).toBe(1);
+
+		// The skip is logged once per task, not once per cycle.
+		await harness.evaluate();
+		expect(harness.warn).toHaveBeenCalledTimes(1);
+		expect(findCardInBoard(harness.store.stored.board, "task-1")?.card.pendingGitAction ?? null).toBeNull();
 	});
 
 	it("clears a pending git action once it goes stale", async () => {
@@ -372,11 +402,9 @@ describe("auto-review reconciler", () => {
 		});
 		const harness = createHarness({
 			board: createBoard({ review: [armedCard] }),
-			metadata: createWorkspaceMetadata([
-				createTaskWorkspaceMetadata("task-1", { headCommit: "commit-1", changedFiles: 0 }),
-			]),
 			now: () => currentTime,
 		});
+		harness.setProbe("task-1", { exists: true, headCommit: "commit-1", changedFiles: 0 });
 
 		// Just inside the staleness window the card stays armed.
 		currentTime = 14 * 60_000;
@@ -390,3 +418,16 @@ describe("auto-review reconciler", () => {
 		expect(harness.terminal.writeInput).not.toHaveBeenCalled();
 	});
 });
+
+function findCardInBoard(
+	board: RuntimeBoardData,
+	taskId: string,
+): { card: RuntimeBoardCard; columnId: RuntimeBoardColumnId } | null {
+	for (const column of board.columns) {
+		const card = column.cards.find((candidate) => candidate.id === taskId);
+		if (card) {
+			return { card, columnId: column.id };
+		}
+	}
+	return null;
+}
