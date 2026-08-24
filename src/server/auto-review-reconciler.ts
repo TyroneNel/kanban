@@ -2,36 +2,39 @@
 //
 // The browser implementation lived in a React effect and lost pending git
 // actions on unmount, reload, or project switch. This module observes durable
-// state (the board card's `pendingGitAction` field plus workspace metadata)
-// and corrects the difference each cycle, so auto-review keeps running with
-// no client connected and recovers armed cards after a restart.
+// state (the board card's `pendingGitAction` field) and corrects the
+// difference each cycle, so auto-review keeps running with no client
+// connected and recovers armed cards after a restart.
+//
+// Git metadata is probed on demand: each cycle selects candidate cards from
+// the board first, then probes only the worktrees of those candidates. A
+// workspace with no auto-review candidates costs zero git work.
+
+import type { ClineTaskSessionService } from "../cline-sdk/cline-task-session-service";
 import type {
+	RuntimeAgentId,
 	RuntimeBoardCard,
 	RuntimeBoardColumnId,
 	RuntimeBoardData,
 	RuntimeTaskAutoReviewMode,
+	RuntimeTaskPendingGitAction,
 	RuntimeTaskSessionSummary,
-	RuntimeWorkspaceMetadata,
 	RuntimeWorkspaceStateResponse,
 } from "../core/api-contract";
-import { moveTaskToColumn } from "../core/task-board-mutations";
+import { isPendingGitActionStale, moveTaskToColumn } from "../core/task-board-mutations";
 import type {
 	RuntimeWorkspaceAtomicMutationResponse,
 	RuntimeWorkspaceAtomicMutationResult,
 } from "../state/workspace-state";
 import type { TerminalSessionManager } from "../terminal/session-manager";
-import {
-	type CreateWorkspaceMetadataMonitorDependencies,
-	createWorkspaceMetadataMonitor,
-	type WorkspaceMetadataMonitor,
-} from "./workspace-metadata-monitor";
+import { probeGitWorkspaceState } from "../workspace/git-sync";
+import { getTaskWorkspacePathInfo } from "../workspace/task-worktree";
 
 /**
- * Mirrors `PENDING_GIT_ACTION_STALE_AFTER_MS` in web-ui/src/types/board.ts.
- * The arming state is shared between the runtime and the browser, so both
- * sides must agree on when an armed card is considered stranded.
+ * Evaluation cadence. Nothing here is latency critical: a slower interval
+ * bounds the git-probe cost while still advancing cards promptly.
  */
-const AUTO_REVIEW_PENDING_STALE_AFTER_MS = 15 * 60_000;
+const AUTO_REVIEW_EVALUATION_INTERVAL_MS = 5_000;
 
 /**
  * Delay between pasting the git action prompt into the task terminal and
@@ -54,6 +57,13 @@ export interface AutoReviewWorkspace {
 	terminalManager: TerminalSessionManager | null;
 }
 
+/** Git metadata for one task worktree, probed on demand. */
+export interface AutoReviewTaskProbe {
+	exists: boolean;
+	headCommit: string | null;
+	changedFiles: number;
+}
+
 export type MutateWorkspaceState = <T>(
 	workspacePath: string,
 	mutate: (state: RuntimeWorkspaceStateResponse) => RuntimeWorkspaceAtomicMutationResult<T>,
@@ -64,21 +74,31 @@ export interface CreateAutoReviewReconcilerDependencies {
 	getWorkspaceState: (workspaceId: string, workspacePath: string) => Promise<RuntimeWorkspaceStateResponse>;
 	mutateWorkspaceState: MutateWorkspaceState;
 	getPromptTemplates: (workspaceId: string, workspacePath: string) => Promise<TaskGitPromptTemplates | null>;
+	/** Workspace-level default agent; cards may override it via `agentId`. */
+	getSelectedAgentId?: (workspaceId: string, workspacePath: string) => Promise<RuntimeAgentId | null>;
+	/** Native Cline session service for a workspace, when one exists. */
+	getClineTaskSessionService?: (workspaceId: string) => ClineTaskSessionService | null;
+	/** Probes one task worktree; injected in tests to count calls. */
+	probeTaskWorkspace?: (input: {
+		workspacePath: string;
+		taskId: string;
+		baseRef: string;
+	}) => Promise<AutoReviewTaskProbe>;
 	/**
 	 * Notified after the reconciler mutates a board so connected browsers can
 	 * resync. Optional: reconciliation is correct without it, browsers just
 	 * observe the change later.
 	 */
 	onBoardMutated?: (workspaceId: string, workspacePath: string) => Promise<void> | void;
-	createMetadataMonitor?: (deps: CreateWorkspaceMetadataMonitorDependencies) => WorkspaceMetadataMonitor;
+	evaluationIntervalMs?: number;
 	now?: () => number;
 	warn?: (message: string) => void;
 }
 
 export interface AutoReviewReconciler {
-	/** Starts reconciling every workspace currently managed by the runtime. */
+	/** Starts the evaluation cadence for every workspace managed by the runtime. */
 	start: () => Promise<void>;
-	/** Ensures a newly tracked workspace is picked up without waiting for discovery. */
+	/** Ensures a newly tracked workspace is picked up without waiting for the next cycle. */
 	trackWorkspace: (workspaceId: string) => void;
 	/** Stops tracking a workspace that was removed from the runtime. */
 	untrackWorkspace: (workspaceId: string) => void;
@@ -87,39 +107,26 @@ export interface AutoReviewReconciler {
 	close: () => void;
 }
 
-interface RuntimeTaskPendingGitAction {
-	action: RuntimeTaskAutoReviewMode;
-	requestedAt: number;
-	headCommitAtRequest: string | null;
-	attempt: number;
-}
-
 interface ReconcilerWorkspaceRuntime {
 	evaluationPromise: Promise<void> | null;
 	pendingEvaluation: boolean;
-	monitorConnected: boolean;
-	lastMetadata: RuntimeWorkspaceMetadata | null;
 	gitActionInFlightTaskIds: Set<string>;
 	submitTimers: Set<NodeJS.Timeout>;
+	clineUnavailableLoggedTaskIds: Set<string>;
 }
 
 function createWorkspaceRuntime(): ReconcilerWorkspaceRuntime {
 	return {
 		evaluationPromise: null,
 		pendingEvaluation: false,
-		monitorConnected: false,
-		lastMetadata: null,
 		gitActionInFlightTaskIds: new Set<string>(),
 		submitTimers: new Set<NodeJS.Timeout>(),
+		clineUnavailableLoggedTaskIds: new Set<string>(),
 	};
 }
 
 function resolveAutoReviewMode(card: RuntimeBoardCard): RuntimeTaskAutoReviewMode {
 	return card.autoReviewMode === "pr" ? "pr" : "commit";
-}
-
-function isPendingGitActionStale(pending: RuntimeTaskPendingGitAction, now: number): boolean {
-	return now - pending.requestedAt > AUTO_REVIEW_PENDING_STALE_AFTER_MS;
 }
 
 function resolvePromptTemplate(action: RuntimeTaskAutoReviewMode, templates: TaskGitPromptTemplates | null): string {
@@ -184,19 +191,32 @@ function replaceBoardCard(board: RuntimeBoardData, taskId: string, nextCard: Run
 	};
 }
 
+async function defaultProbeTaskWorkspace(input: {
+	workspacePath: string;
+	taskId: string;
+	baseRef: string;
+}): Promise<AutoReviewTaskProbe> {
+	const pathInfo = await getTaskWorkspacePathInfo({
+		cwd: input.workspacePath,
+		taskId: input.taskId,
+		baseRef: input.baseRef,
+	});
+	if (!pathInfo.exists) {
+		return { exists: false, headCommit: null, changedFiles: 0 };
+	}
+	const probe = await probeGitWorkspaceState(pathInfo.path);
+	return {
+		exists: true,
+		headCommit: probe.headCommit,
+		changedFiles: probe.changedFiles,
+	};
+}
+
 export function createAutoReviewReconciler(deps: CreateAutoReviewReconcilerDependencies): AutoReviewReconciler {
 	const workspaceRuntimes = new Map<string, ReconcilerWorkspaceRuntime>();
+	const probeTaskWorkspace = deps.probeTaskWorkspace ?? defaultProbeTaskWorkspace;
 	let disposed = false;
-
-	const monitor = (deps.createMetadataMonitor ?? createWorkspaceMetadataMonitor)({
-		onMetadataUpdated: (workspaceId, metadata) => {
-			const runtime = workspaceRuntimes.get(workspaceId);
-			if (runtime) {
-				runtime.lastMetadata = metadata;
-			}
-			void evaluateWorkspace(workspaceId);
-		},
-	});
+	let evaluationTimer: NodeJS.Timeout | null = null;
 
 	const getOrCreateRuntime = (workspaceId: string): ReconcilerWorkspaceRuntime => {
 		const existing = workspaceRuntimes.get(workspaceId);
@@ -301,21 +321,12 @@ export function createAutoReviewReconciler(deps: CreateAutoReviewReconcilerDepen
 		}
 	};
 
-	const triggerGitAction = async (
-		workspaceId: string,
-		workspacePath: string,
+	const triggerTerminalGitAction = (
 		terminalManager: TerminalSessionManager,
 		card: RuntimeBoardCard,
-		action: RuntimeTaskAutoReviewMode,
+		prompt: string,
 		runtime: ReconcilerWorkspaceRuntime,
-	): Promise<boolean> => {
-		let templates: TaskGitPromptTemplates | null = null;
-		try {
-			templates = await deps.getPromptTemplates(workspaceId, workspacePath);
-		} catch {
-			// Fall back to the built-in prompt below.
-		}
-		const prompt = buildGitActionPrompt(action, card.baseRef, templates);
+	): boolean => {
 		let accepted: RuntimeTaskSessionSummary | null = null;
 		try {
 			accepted = terminalManager.writeInput(card.id, Buffer.from(prompt, "utf8"));
@@ -331,12 +342,55 @@ export function createAutoReviewReconciler(deps: CreateAutoReviewReconcilerDepen
 			try {
 				terminalManager.writeInput(card.id, Buffer.from("\r", "utf8"));
 			} catch {
-				// The session died between prompt and submit; staleness clears the arming.
+				// The session died between prompt and submit; the failed trigger disarms.
 			}
 		}, AUTO_REVIEW_INPUT_SUBMIT_DELAY_MS);
 		submitTimer.unref();
 		runtime.submitTimers.add(submitTimer);
 		return true;
+	};
+
+	const triggerClineGitAction = async (
+		workspaceId: string,
+		card: RuntimeBoardCard,
+		prompt: string,
+	): Promise<boolean> => {
+		const service = deps.getClineTaskSessionService?.(workspaceId) ?? null;
+		if (!service) {
+			return false;
+		}
+		try {
+			// Mirrors the chat-send route: retry once after rebinding a persisted
+			// session whose SDK handle was lost (for example across a restart).
+			let summary = await service.sendTaskSessionInput(card.id, prompt, "act");
+			if (!summary) {
+				const rebound = await service.rebindPersistedTaskSession(card.id);
+				if (rebound) {
+					summary = await service.sendTaskSessionInput(card.id, prompt, "act");
+				}
+			}
+			return summary !== null;
+		} catch {
+			return false;
+		}
+	};
+
+	const triggerGitAction = async (input: {
+		workspace: AutoReviewWorkspace;
+		card: RuntimeBoardCard;
+		effectiveAgent: RuntimeAgentId | null;
+		templates: TaskGitPromptTemplates | null;
+		runtime: ReconcilerWorkspaceRuntime;
+	}): Promise<boolean> => {
+		const action = resolveAutoReviewMode(input.card);
+		const prompt = buildGitActionPrompt(action, input.card.baseRef, input.templates);
+		if (input.effectiveAgent === "cline") {
+			return await triggerClineGitAction(input.workspace.workspaceId, input.card, prompt);
+		}
+		if (!input.workspace.terminalManager) {
+			return false;
+		}
+		return triggerTerminalGitAction(input.workspace.terminalManager, input.card, prompt, input.runtime);
 	};
 
 	const reconcileWorkspace = async (
@@ -346,18 +400,17 @@ export function createAutoReviewReconciler(deps: CreateAutoReviewReconcilerDepen
 		runtime: ReconcilerWorkspaceRuntime,
 	): Promise<void> => {
 		const timestamp = deps.now?.() ?? Date.now();
-		const metadataByTaskId = new Map(
-			(runtime.lastMetadata?.taskWorkspaces ?? []).map((taskWorkspace) => [taskWorkspace.taskId, taskWorkspace]),
-		);
-		let boardMutated = false;
 		// Aborted mid-cycle when the workspace gets removed (project deletion or
 		// shutdown); mutating a workspace that is being torn down could resurrect it.
 		const stillTracked = (): boolean => workspaceRuntimes.has(workspace.workspaceId);
+		let boardMutated = false;
 
+		// Housekeeping pass first: armed cards that left review (or lost the
+		// auto-review toggle) are disarmed. This needs no git work.
+		const candidates: RuntimeBoardCard[] = [];
 		for (const column of state.board.columns) {
 			for (const card of column.cards) {
 				const pendingGitAction = card.pendingGitAction ?? null;
-
 				if (column.id !== "review") {
 					// A card that left review while armed must not stay armed forever.
 					if (pendingGitAction && stillTracked() && (await clearPendingGitAction(workspacePath, card.id))) {
@@ -365,28 +418,70 @@ export function createAutoReviewReconciler(deps: CreateAutoReviewReconcilerDepen
 					}
 					continue;
 				}
-
 				if (card.autoReviewEnabled !== true) {
 					if (pendingGitAction && stillTracked() && (await clearPendingGitAction(workspacePath, card.id))) {
 						boardMutated = true;
 					}
 					continue;
 				}
+				candidates.push(card);
+			}
+		}
 
-				const action = resolveAutoReviewMode(card);
-				const taskMetadata = metadataByTaskId.get(card.id) ?? null;
+		// No candidates: nothing to probe, nothing to arm or complete. This is the
+		// common case and must cost zero git work.
+		if (candidates.length > 0) {
+			let selectedAgentId: RuntimeAgentId | null = null;
+			try {
+				selectedAgentId = (await deps.getSelectedAgentId?.(workspace.workspaceId, workspacePath)) ?? null;
+			} catch {
+				selectedAgentId = null;
+			}
+			let templates: TaskGitPromptTemplates | null = null;
+			try {
+				templates = await deps.getPromptTemplates(workspace.workspaceId, workspacePath);
+			} catch {
+				templates = null;
+			}
+			// One probe per card per cycle, even if both the armed and unarmed
+			// branches look at the same card.
+			const probeCache = new Map<string, Promise<AutoReviewTaskProbe>>();
+			const probeTask = (card: RuntimeBoardCard): Promise<AutoReviewTaskProbe> => {
+				const cached = probeCache.get(card.id);
+				if (cached) {
+					return cached;
+				}
+				const probe = probeTaskWorkspace({
+					workspacePath,
+					taskId: card.id,
+					baseRef: card.baseRef,
+				}).catch(() => ({ exists: false, headCommit: null, changedFiles: 0 }) satisfies AutoReviewTaskProbe);
+				probeCache.set(card.id, probe);
+				return probe;
+			};
+
+			for (const card of candidates) {
+				if (!stillTracked()) {
+					break;
+				}
+				const pendingGitAction = card.pendingGitAction ?? null;
+				const effectiveAgent = card.agentId ?? selectedAgentId;
 
 				if (pendingGitAction) {
 					if (isPendingGitActionStale(pendingGitAction, timestamp)) {
-						if (stillTracked() && (await clearPendingGitAction(workspacePath, card.id))) {
+						if (await clearPendingGitAction(workspacePath, card.id)) {
 							boardMutated = true;
 						}
 						continue;
 					}
 					// Completion is judged on evidence: HEAD moved past the commit
 					// recorded at arming time. Zero changed files alone proves nothing.
-					const headCommit = taskMetadata?.headCommit ?? null;
-					if (headCommit !== null && headCommit !== pendingGitAction.headCommitAtRequest) {
+					const probe = await probeTask(card);
+					if (
+						probe.exists &&
+						probe.headCommit !== null &&
+						probe.headCommit !== pendingGitAction.headCommitAtRequest
+					) {
 						if (stillTracked() && (await completePendingGitAction(workspacePath, card.id, timestamp))) {
 							boardMutated = true;
 						}
@@ -394,10 +489,29 @@ export function createAutoReviewReconciler(deps: CreateAutoReviewReconcilerDepen
 					continue;
 				}
 
-				const changedFiles = taskMetadata?.changedFiles ?? 0;
+				// Never arm a card whose delivery channel is missing: it could only
+				// "complete" via the staleness timeout, which silently strands it.
+				if (effectiveAgent === "cline") {
+					const service = deps.getClineTaskSessionService?.(workspace.workspaceId) ?? null;
+					const sessionSummary = service?.getSummary(card.id) ?? null;
+					if (!service || !sessionSummary) {
+						if (!runtime.clineUnavailableLoggedTaskIds.has(card.id)) {
+							runtime.clineUnavailableLoggedTaskIds.add(card.id);
+							deps.warn?.(
+								`Auto-review is waiting for a native Cline session for task "${card.id}"; the card stays unarmed until one exists.`,
+							);
+						}
+						continue;
+					}
+				} else if (!workspace.terminalManager || !workspace.terminalManager.getSummary(card.id)) {
+					// No terminal session to deliver the prompt to.
+					continue;
+				}
+
+				const probe = await probeTask(card);
 				// Review entries with zero changes (common during planning loops)
 				// are intentionally ignored.
-				if (changedFiles <= 0 || runtime.gitActionInFlightTaskIds.has(card.id) || !stillTracked()) {
+				if (!probe.exists || probe.changedFiles <= 0 || runtime.gitActionInFlightTaskIds.has(card.id)) {
 					continue;
 				}
 
@@ -406,24 +520,15 @@ export function createAutoReviewReconciler(deps: CreateAutoReviewReconcilerDepen
 					const armed = await armPendingGitAction(
 						workspacePath,
 						card.id,
-						action,
-						taskMetadata?.headCommit ?? null,
+						resolveAutoReviewMode(card),
+						probe.headCommit,
 						timestamp,
 					);
 					if (!armed || !stillTracked()) {
 						continue;
 					}
 					boardMutated = true;
-					const triggered =
-						workspace.terminalManager !== null &&
-						(await triggerGitAction(
-							workspace.workspaceId,
-							workspacePath,
-							workspace.terminalManager,
-							card,
-							action,
-							runtime,
-						));
+					const triggered = await triggerGitAction({ workspace, card, effectiveAgent, templates, runtime });
 					if (!triggered && stillTracked() && (await clearPendingGitAction(workspacePath, card.id))) {
 						boardMutated = true;
 					}
@@ -446,7 +551,6 @@ export function createAutoReviewReconciler(deps: CreateAutoReviewReconcilerDepen
 		const workspace = deps.listWorkspaces().find((candidate) => candidate.workspaceId === workspaceId) ?? null;
 		const workspacePath = workspace?.workspacePath ?? null;
 		if (!workspace || !workspacePath) {
-			monitor.disposeWorkspace(workspaceId);
 			workspaceRuntimes.delete(workspaceId);
 			return;
 		}
@@ -461,37 +565,6 @@ export function createAutoReviewReconciler(deps: CreateAutoReviewReconcilerDepen
 		// The workspace may have been untracked while its state was being read.
 		if (!workspaceRuntimes.has(workspaceId)) {
 			return;
-		}
-
-		let metadata: RuntimeWorkspaceMetadata | null = runtime.lastMetadata;
-		if (!runtime.monitorConnected) {
-			try {
-				metadata = await monitor.connectWorkspace({
-					workspaceId: workspace.workspaceId,
-					workspacePath,
-					board: state.board,
-				});
-				runtime.monitorConnected = true;
-			} catch {
-				metadata = null;
-			}
-		} else {
-			// Refresh through the existing monitor so the evaluation always observes
-			// the latest git metadata. updateWorkspaceState is cached by state token,
-			// so this is a cheap read when nothing changed, and it re-syncs the
-			// tracked task list with the current board.
-			try {
-				metadata = await monitor.updateWorkspaceState({
-					workspaceId: workspace.workspaceId,
-					workspacePath,
-					board: state.board,
-				});
-			} catch {
-				metadata = runtime.lastMetadata;
-			}
-		}
-		if (metadata) {
-			runtime.lastMetadata = metadata;
 		}
 
 		await reconcileWorkspace(workspace, workspacePath, state, runtime);
@@ -528,13 +601,29 @@ export function createAutoReviewReconciler(deps: CreateAutoReviewReconcilerDepen
 		await chain;
 	};
 
+	const evaluateAllWorkspaces = (): void => {
+		for (const workspace of deps.listWorkspaces()) {
+			if (workspace.workspacePath) {
+				void evaluateWorkspace(workspace.workspaceId);
+			}
+		}
+	};
+
 	return {
 		start: async () => {
-			for (const workspace of deps.listWorkspaces()) {
-				if (workspace.workspacePath) {
-					void evaluateWorkspace(workspace.workspaceId);
-				}
+			if (disposed) {
+				return;
 			}
+			const intervalMs = deps.evaluationIntervalMs ?? AUTO_REVIEW_EVALUATION_INTERVAL_MS;
+			if (!evaluationTimer) {
+				evaluationTimer = setInterval(() => {
+					if (!disposed) {
+						evaluateAllWorkspaces();
+					}
+				}, intervalMs);
+				evaluationTimer.unref();
+			}
+			evaluateAllWorkspaces();
 		},
 		trackWorkspace: (workspaceId: string) => {
 			void evaluateWorkspace(workspaceId);
@@ -547,20 +636,23 @@ export function createAutoReviewReconciler(deps: CreateAutoReviewReconcilerDepen
 				}
 			}
 			workspaceRuntimes.delete(workspaceId);
-			monitor.disposeWorkspace(workspaceId);
 		},
 		evaluateWorkspace,
 		close: () => {
 			disposed = true;
+			if (evaluationTimer) {
+				clearInterval(evaluationTimer);
+				evaluationTimer = null;
+			}
 			for (const runtime of workspaceRuntimes.values()) {
 				for (const timer of runtime.submitTimers) {
 					clearTimeout(timer);
 				}
 				runtime.submitTimers.clear();
 				runtime.gitActionInFlightTaskIds.clear();
+				runtime.clineUnavailableLoggedTaskIds.clear();
 			}
 			workspaceRuntimes.clear();
-			monitor.close();
 		},
 	};
 }
