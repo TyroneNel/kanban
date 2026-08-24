@@ -1,11 +1,14 @@
+import { isPendingGitActionStale, PENDING_GIT_ACTION_STALE_AFTER_MS } from "@runtime-task-state";
 import type {
 	RuntimeAgentId,
 	RuntimeBoardColumnId,
 	RuntimeTaskAutoReviewMode,
 	RuntimeTaskClineSettings,
 	RuntimeTaskImage,
+	RuntimeTaskPendingGitAction,
 } from "@/runtime/types";
 
+export { isPendingGitActionStale, PENDING_GIT_ACTION_STALE_AFTER_MS };
 export type BoardColumnId = RuntimeBoardColumnId;
 
 export type TaskAutoReviewMode = RuntimeTaskAutoReviewMode;
@@ -36,22 +39,7 @@ export function getTaskAutoReviewCancelButtonLabel(mode: TaskAutoReviewMode | nu
 	return "Cancel Auto-commit";
 }
 
-export interface TaskPendingGitAction {
-	action: TaskAutoReviewMode;
-	requestedAt: number;
-	headCommitAtRequest: string | null;
-	attempt: number;
-}
-
-/**
- * How long a persisted pending git action stays armed before it is treated as stale.
- * The agent commit/PR choreography takes minutes, so give it generous headroom.
- */
-export const PENDING_GIT_ACTION_STALE_AFTER_MS = 15 * 60_000;
-
-export function isPendingGitActionStale(pending: TaskPendingGitAction, now: number = Date.now()): boolean {
-	return now - pending.requestedAt > PENDING_GIT_ACTION_STALE_AFTER_MS;
-}
+export type TaskPendingGitAction = RuntimeTaskPendingGitAction;
 
 export interface BoardCard {
 	id: string;
