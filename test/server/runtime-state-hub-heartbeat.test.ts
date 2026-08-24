@@ -1,5 +1,5 @@
 import { createServer, type Server } from "node:http";
-import { AddressInfo } from "node:net";
+import type { AddressInfo } from "node:net";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
@@ -30,7 +30,7 @@ describe("runtime-state hub heartbeat (#285)", () => {
 		});
 		server = createServer();
 		server.on("upgrade", (req, socket, head) => {
-			hub.handleUpgrade(req, socket, head, undefined);
+			hub.handleUpgrade(req, socket, head, { requestedWorkspaceId: null });
 		});
 		await new Promise<void>((resolve) => server.listen(0, resolve));
 		port = (server.address() as AddressInfo).port;
