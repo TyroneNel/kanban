@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { Command, Option } from "commander";
 import ora, { type Ora } from "ora";
 import packageJson from "../package.json" with { type: "json" };
+import type { ClineTaskSessionService } from "./cline-sdk/cline-task-session-service";
 import { disposeCliTelemetryService } from "./cline-sdk/cline-telemetry-service.js";
 import { registerHooksCommand } from "./commands/hooks";
 import { registerTaskCommand } from "./commands/task";
@@ -413,6 +414,7 @@ async function startServer(): Promise<{
 	]);
 	let runtimeStateHub: RuntimeStateHub | undefined;
 	let autoReviewReconciler: AutoReviewReconciler | undefined;
+	const clineTaskSessionServiceByWorkspaceId = new Map<string, ClineTaskSessionService>();
 	const workspaceRegistry = await createWorkspaceRegistry({
 		cwd: process.cwd(),
 		loadGlobalRuntimeConfig,
@@ -442,6 +444,7 @@ async function startServer(): Promise<{
 		});
 		runtimeHub.disposeWorkspace(workspaceId);
 		autoReviewReconciler?.untrackWorkspace(workspaceId);
+		clineTaskSessionServiceByWorkspaceId.delete(workspaceId);
 		return disposed;
 	};
 
@@ -452,6 +455,9 @@ async function startServer(): Promise<{
 			console.warn(`[kanban] ${message}`);
 		},
 		ensureTerminalManagerForWorkspace: workspaceRegistry.ensureTerminalManagerForWorkspace,
+		onClineTaskSessionServiceReady: (workspaceId, service) => {
+			clineTaskSessionServiceByWorkspaceId.set(workspaceId, service);
+		},
 		resolveInteractiveShellCommand,
 		runCommand: runScopedCommand,
 		resolveProjectInputPath,
@@ -525,6 +531,11 @@ async function startServer(): Promise<{
 				openPrPromptTemplateDefault: config.openPrPromptTemplateDefault,
 			};
 		},
+		getSelectedAgentId: async (workspaceId, workspacePath) => {
+			const config = await workspaceRegistry.loadScopedRuntimeConfig({ workspaceId, workspacePath });
+			return config.selectedAgentId;
+		},
+		getClineTaskSessionService: (workspaceId) => clineTaskSessionServiceByWorkspaceId.get(workspaceId) ?? null,
 		onBoardMutated: (workspaceId, workspacePath) =>
 			void runtimeHub.broadcastRuntimeWorkspaceStateUpdated(workspaceId, workspacePath),
 		warn: (message) => {
