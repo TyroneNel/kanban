@@ -77,7 +77,6 @@ export interface UseGitActionsResult {
 	handleOpenPrTask: (taskId: string) => void;
 	handleAgentCommitTask: (taskId: string) => void;
 	handleAgentOpenPrTask: (taskId: string) => void;
-	runAutoReviewGitAction: (taskId: string, action: TaskGitAction) => Promise<boolean>;
 	resetGitActionState: () => void;
 }
 
@@ -546,13 +545,6 @@ export function useGitActions({
 		[runTaskGitAction],
 	);
 
-	const runAutoReviewGitAction = useCallback(
-		async (taskId: string, action: TaskGitAction) => {
-			return await runTaskGitAction(taskId, action, "card");
-		},
-		[runTaskGitAction],
-	);
-
 	const runGitAction = useCallback(
 		async (action: RuntimeGitSyncAction) => {
 			if (!currentProjectId || runningGitAction || isSwitchingHomeBranch) {
@@ -727,7 +719,6 @@ export function useGitActions({
 		handleOpenPrTask,
 		handleAgentCommitTask,
 		handleAgentOpenPrTask,
-		runAutoReviewGitAction,
 		resetGitActionState,
 	};
 }

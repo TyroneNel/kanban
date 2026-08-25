@@ -32,7 +32,6 @@ vi.mock("@/runtime/workspace-state-query", () => ({
 interface HookSnapshot {
 	handleCommitTask: UseGitActionsResult["handleCommitTask"];
 	handleAgentCommitTask: UseGitActionsResult["handleAgentCommitTask"];
-	runAutoReviewGitAction: UseGitActionsResult["runAutoReviewGitAction"];
 }
 
 function createGitHistoryResult(): UseGitActionsResult["gitHistory"] {
@@ -211,9 +210,8 @@ function HookHarness({
 		onSnapshot({
 			handleCommitTask: gitActions.handleCommitTask,
 			handleAgentCommitTask: gitActions.handleAgentCommitTask,
-			runAutoReviewGitAction: gitActions.runAutoReviewGitAction,
 		});
-	}, [gitActions.handleAgentCommitTask, gitActions.handleCommitTask, gitActions.runAutoReviewGitAction, onSnapshot]);
+	}, [gitActions.handleAgentCommitTask, gitActions.handleCommitTask, onSnapshot]);
 
 	return null;
 }
@@ -304,45 +302,6 @@ describe("useGitActions", () => {
 		}
 	});
 
-	function useDeliveryFakeTimers(): void {
-		vi.useFakeTimers({
-			toFake: ["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval"],
-		});
-	}
-
-	async function renderHarness(args: {
-		selectedAgentId?: RuntimeConfigResponse["selectedAgentId"];
-		sendTaskSessionInput: Parameters<typeof useGitActions>[0]["sendTaskSessionInput"];
-		sendTaskChatMessage?: Parameters<typeof useGitActions>[0]["sendTaskChatMessage"];
-	}): Promise<HookSnapshot> {
-		let latestSnapshot: HookSnapshot | null = null;
-		await act(async () => {
-			root.render(
-				<HookHarness
-					selectedAgentId={args.selectedAgentId}
-					sendTaskSessionInput={args.sendTaskSessionInput}
-					sendTaskChatMessage={args.sendTaskChatMessage ?? (async () => ({ ok: true }))}
-					onSnapshot={(snapshot) => {
-						latestSnapshot = snapshot;
-					}}
-				/>,
-			);
-			await Promise.resolve();
-		});
-		if (latestSnapshot === null) {
-			throw new Error("Expected a hook snapshot.");
-		}
-		return latestSnapshot;
-	}
-
-	async function flushUntil(predicate: () => boolean): Promise<void> {
-		for (let i = 0; i < 20 && !predicate(); i += 1) {
-			await Promise.resolve();
-		}
-		await Promise.resolve();
-		await Promise.resolve();
-	}
-
 	it("sends commit prompts through the native cline chat API", async () => {
 		const sendTaskSessionInput = vi.fn(async () => ({ ok: true }));
 		const sendTaskChatMessage = vi.fn(async () => ({ ok: true }));
@@ -424,128 +383,6 @@ describe("useGitActions", () => {
 			mode: "paste",
 		});
 		expect(sendTaskSessionInput).toHaveBeenCalledWith("task-1", "\r", { appendNewline: false });
-		expect(showAppToastMock).not.toHaveBeenCalled();
-	});
-
-	it("submits a git-action prompt after a slow session paste lands instead of after a 200ms timer", async () => {
-		useDeliveryFakeTimers();
-		const pasteLandedAfterMs = 400;
-		const startedAt = Date.now();
-		let enterSentAt: number | null = null;
-		const sessionInputCalls: Array<{ text: string; at: number }> = [];
-		fetchWorkspaceStateMock.mockImplementation(async () => {
-			const pasteLanded = Date.now() - startedAt >= pasteLandedAfterMs;
-			const submitted = enterSentAt !== null;
-			return createWorkspaceState(
-				createSessionSummary({
-					lastOutputAt: submitted ? 3000 : pasteLanded ? 2000 : 1000,
-					state: submitted ? "running" : "idle",
-				}),
-			);
-		});
-		const sendTaskSessionInput = vi.fn(async (_taskId: string, text: string) => {
-			const at = Date.now();
-			sessionInputCalls.push({ text, at });
-			if (text === "\r") {
-				enterSentAt = at;
-			}
-			return { ok: true };
-		});
-		const snapshot = await renderHarness({
-			selectedAgentId: "codex",
-			sendTaskSessionInput,
-		});
-
-		let submitted: boolean | undefined;
-		await act(async () => {
-			const actionPromise = snapshot.runAutoReviewGitAction("task-1", "commit");
-			await flushUntil(() => sessionInputCalls.length > 0);
-			expect(sessionInputCalls.some((call) => call.text !== "\r")).toBe(true);
-			await vi.advanceTimersByTimeAsync(200);
-			expect(sessionInputCalls.some((call) => call.text === "\r")).toBe(false);
-			await vi.advanceTimersByTimeAsync(250);
-			submitted = await actionPromise;
-		});
-
-		expect(submitted).toBe(true);
-		const enterCall = sessionInputCalls.find((call) => call.text === "\r");
-		expect(enterCall).toBeDefined();
-		expect((enterCall?.at ?? 0) - startedAt).toBeGreaterThanOrEqual(pasteLandedAfterMs);
-		expect(showAppToastMock).not.toHaveBeenCalled();
-	});
-
-	it("retries submit once and returns failure when the session never becomes active", async () => {
-		useDeliveryFakeTimers();
-		const sessionInputCalls: Array<{ text: string; at: number }> = [];
-		fetchWorkspaceStateMock.mockImplementation(async () => {
-			const pasteSent = sessionInputCalls.some((call) => call.text !== "\r");
-			return createWorkspaceState(
-				createSessionSummary({
-					lastOutputAt: pasteSent ? 2000 : 1000,
-					state: "idle",
-				}),
-			);
-		});
-		const sendTaskSessionInput = vi.fn(async (_taskId: string, text: string) => {
-			sessionInputCalls.push({ text, at: Date.now() });
-			return { ok: true };
-		});
-		const snapshot = await renderHarness({
-			selectedAgentId: "codex",
-			sendTaskSessionInput,
-		});
-
-		let submitted: boolean | undefined;
-		await act(async () => {
-			const actionPromise = snapshot.runAutoReviewGitAction("task-1", "commit");
-			await flushUntil(() => sessionInputCalls.length > 0);
-			await vi.advanceTimersByTimeAsync(10_000);
-			submitted = await actionPromise;
-		});
-
-		expect(submitted).toBe(false);
-		expect(sessionInputCalls.filter((call) => call.text === "\r")).toHaveLength(2);
-		expect(showAppToastMock).toHaveBeenCalledWith(
-			expect.objectContaining({
-				intent: "danger",
-				message: "Could not confirm the prompt was submitted to the task session.",
-			}),
-		);
-	});
-
-	it("does not wait 200ms when paste and submit are confirmed immediately", async () => {
-		useDeliveryFakeTimers();
-		const startedAt = Date.now();
-		const sessionInputCalls: Array<{ text: string; at: number }> = [];
-		fetchWorkspaceStateMock.mockImplementation(async () => {
-			const pasteSent = sessionInputCalls.some((call) => call.text !== "\r");
-			const enterSent = sessionInputCalls.some((call) => call.text === "\r");
-			return createWorkspaceState(
-				createSessionSummary({
-					lastOutputAt: enterSent ? 3000 : pasteSent ? 2000 : 1000,
-					state: enterSent ? "running" : "idle",
-				}),
-			);
-		});
-		const sendTaskSessionInput = vi.fn(async (_taskId: string, text: string) => {
-			sessionInputCalls.push({ text, at: Date.now() });
-			return { ok: true };
-		});
-		const snapshot = await renderHarness({
-			selectedAgentId: "codex",
-			sendTaskSessionInput,
-		});
-
-		let submitted: boolean | undefined;
-		await act(async () => {
-			const actionPromise = snapshot.runAutoReviewGitAction("task-1", "commit");
-			await flushUntil(() => sessionInputCalls.some((call) => call.text === "\r"));
-			expect(sessionInputCalls.filter((call) => call.text === "\r")).toHaveLength(1);
-			expect(Date.now() - startedAt).toBeLessThan(200);
-			submitted = await actionPromise;
-		});
-
-		expect(submitted).toBe(true);
 		expect(showAppToastMock).not.toHaveBeenCalled();
 	});
 });

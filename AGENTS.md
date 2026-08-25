@@ -34,6 +34,7 @@ Architecture opinions
 
 Git guardrails
 - NEVER commit unless user asks.
+- When merging a `main`-based branch into `master`, a conflict that shows master deleted a symbol is usually intentional (a later fork PR already removed it). Keep master's deletion unless the merge prompt gives a reason to restore the symbol.
 
 GitHub issues
 When reading issues:
