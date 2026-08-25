@@ -13,7 +13,9 @@ import { getGitCommandErrorMessage, getGitStdout, readGitHeadInfo, runGit } from
 import { getWorkspaceFolderLabelForWorktreePath, normalizeTaskIdForWorktreePath } from "./task-worktree-path";
 import {
 	DEFAULT_WORKTREE_SHARED_DIRECTORIES,
+	formatSharedDirectoryCredentialWarning,
 	formatUnprovisionedIgnoredPathWarning,
+	listContainsCredentialBasename,
 	normalizeWorktreeSharedDirectories,
 	parseWorktreeAllowlistFile,
 	selectIgnoredPathsToProvision,
@@ -400,14 +402,47 @@ async function syncIgnoredPathsIntoWorktree(repoPath: string, worktreePath: stri
 	);
 	const turbopackNodeModulesSkipPaths = new Set(await listTurbopackNodeModulesSymlinkSkipPaths(repoPath));
 	const candidatePaths = ignoredPaths.filter((relativePath) => !turbopackNodeModulesSkipPaths.has(relativePath));
-	const mirroredIgnoredPaths = selectIgnoredPathsToProvision(candidatePaths, {
-		allowlistedPaths: await loadWorktreeAllowlistedPaths(repoPath),
+	const allowlistedPaths = await loadWorktreeAllowlistedPaths(repoPath);
+	const allowlisted = new Set(allowlistedPaths);
+	const selectedPaths = selectIgnoredPathsToProvision(candidatePaths, {
+		allowlistedPaths,
 		sharedDirectories: await loadWorktreeSharedDirectories(repoPath),
 	});
 
+	const mirroredIgnoredPaths: string[] = [];
+	const nestedCredentialWarnings: string[] = [];
+	const skippedForNestedCredentials = new Set<string>();
+
+	for (const relativePath of selectedPaths) {
+		if (allowlisted.has(relativePath)) {
+			mirroredIgnoredPaths.push(relativePath);
+			continue;
+		}
+
+		const sourcePath = join(repoPath, relativePath);
+		const sourceStat = await lstat(sourcePath).catch(() => null);
+		if (!sourceStat?.isDirectory()) {
+			mirroredIgnoredPaths.push(relativePath);
+			continue;
+		}
+
+		const topLevelNames = await readdir(sourcePath);
+		const credentialNames = listContainsCredentialBasename(topLevelNames);
+		if (credentialNames.length > 0) {
+			skippedForNestedCredentials.add(relativePath);
+			const warning = formatSharedDirectoryCredentialWarning(relativePath, credentialNames);
+			if (warning) {
+				nestedCredentialWarnings.push(warning);
+			}
+			continue;
+		}
+
+		mirroredIgnoredPaths.push(relativePath);
+	}
+
 	const unprovisionedExistingPaths: string[] = [];
 	for (const relativePath of candidatePaths) {
-		if (mirroredIgnoredPaths.includes(relativePath)) {
+		if (mirroredIgnoredPaths.includes(relativePath) || skippedForNestedCredentials.has(relativePath)) {
 			continue;
 		}
 		if (await pathExists(join(repoPath, relativePath))) {
@@ -440,7 +475,10 @@ async function syncIgnoredPathsIntoWorktree(repoPath: string, worktreePath: stri
 		});
 	}
 
-	return formatUnprovisionedIgnoredPathWarning(unprovisionedExistingPaths) ?? undefined;
+	return joinWorktreeWarnings(
+		...nestedCredentialWarnings,
+		formatUnprovisionedIgnoredPathWarning(unprovisionedExistingPaths),
+	);
 }
 
 async function initializeSubmodulesIfNeeded(worktreePath: string): Promise<void> {
