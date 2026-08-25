@@ -101,7 +101,9 @@ function normalizeTaskClineReasoningEffort(rawReasoningEffort: unknown): Runtime
 		rawReasoningEffort === "low" ||
 		rawReasoningEffort === "medium" ||
 		rawReasoningEffort === "high" ||
-		rawReasoningEffort === "xhigh"
+		rawReasoningEffort === "xhigh" ||
+		rawReasoningEffort === "minimal" ||
+		rawReasoningEffort === "max"
 	) {
 		return rawReasoningEffort;
 	}

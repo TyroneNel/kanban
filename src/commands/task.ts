@@ -124,7 +124,9 @@ function parseTaskClineReasoningEffort(value: string | undefined): ParsedTaskCli
 	if (result.success) {
 		return result.data;
 	}
-	throw new Error("Invalid Cline reasoning effort. Expected one of: default, low, medium, high, xhigh, inherit.");
+	throw new Error(
+		"Invalid Cline reasoning effort. Expected one of: default, low, medium, high, xhigh, minimal, max, inherit.",
+	);
 }
 
 function cloneTaskClineSettings(settings?: RuntimeTaskClineSettings): RuntimeTaskClineSettings | undefined {
@@ -1136,7 +1138,7 @@ export function registerTaskCommand(program: Command): void {
 		)
 		.option(
 			"--cline-reasoning-effort <level>",
-			"Cline reasoning effort override: default | low | medium | high | xhigh.",
+			"Cline reasoning effort override: default | minimal | low | medium | high | xhigh | max.",
 		)
 		.action(
 			async (options: {
@@ -1196,7 +1198,7 @@ export function registerTaskCommand(program: Command): void {
 		.option("--cline-model <id>", 'Cline model override (e.g. claude-sonnet-4-20250514). Use "default" to clear.')
 		.option(
 			"--cline-reasoning-effort <level>",
-			'Cline reasoning effort override: default | low | medium | high | xhigh. Use "inherit" to clear.',
+			'Cline reasoning effort override: default | minimal | low | medium | high | xhigh | max. Use "inherit" to clear.',
 		)
 		.action(
 			async (options: {

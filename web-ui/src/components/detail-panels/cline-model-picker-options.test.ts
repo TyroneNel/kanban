@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
 	buildClineAgentModelPickerOptions,
 	buildClineSelectedModelButtonText,
+	CLINE_REASONING_EFFORT_OPTIONS,
 	CLINE_RECOMMENDED_MODEL_IDS,
 	formatClineReasoningEffortLabel,
 	formatClineSelectedModelButtonText,
@@ -20,8 +21,8 @@ describe("buildClineAgentModelPickerOptions", () => {
 		const models: RuntimeClineProviderModel[] = [
 			createModel("openai/gpt-5.5", "GPT-5.5"),
 			createModel("openai/gpt-5.2", "GPT-5.2"),
-			createModel("anthropic/claude-opus-4.7", "Claude Opus 4.7"),
-			createModel("anthropic/claude-sonnet-4.6", "Claude Sonnet 4.6"),
+			createModel("anthropic/claude-opus-5", "Claude Opus 5"),
+			createModel("anthropic/claude-sonnet-5", "Claude Sonnet 5"),
 			createModel("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro"),
 		];
 
@@ -50,6 +51,20 @@ describe("cline model labels", () => {
 	it("formats reasoning effort labels for display", () => {
 		expect(formatClineReasoningEffortLabel("")).toBe("Default");
 		expect(formatClineReasoningEffortLabel("xhigh")).toBe("Extra high");
+		expect(formatClineReasoningEffortLabel("minimal")).toBe("Minimal");
+		expect(formatClineReasoningEffortLabel("max")).toBe("Max");
+	});
+
+	it("orders reasoning effort from minimal to max", () => {
+		expect(CLINE_REASONING_EFFORT_OPTIONS.map((option) => option.value)).toEqual([
+			"",
+			"minimal",
+			"low",
+			"medium",
+			"high",
+			"xhigh",
+			"max",
+		]);
 	});
 
 	it("appends non-default reasoning effort to the selected model label", () => {

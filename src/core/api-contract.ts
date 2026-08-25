@@ -88,7 +88,7 @@ export const runtimeTaskAutoReviewModeSchema = z.preprocess(
 );
 export type RuntimeTaskAutoReviewMode = z.infer<typeof runtimeTaskAutoReviewModeEnum>;
 
-export const runtimeClineReasoningEffortSchema = z.enum(["low", "medium", "high", "xhigh"]);
+export const runtimeClineReasoningEffortSchema = z.enum(["low", "medium", "high", "xhigh", "minimal", "max"]);
 export type RuntimeClineReasoningEffort = z.infer<typeof runtimeClineReasoningEffortSchema>;
 export const runtimeTaskClineSettingsSchema = z.object({
 	providerId: z.string().optional(),
@@ -104,7 +104,15 @@ export const runtimeTaskImageSchema = z.object({
 });
 export type RuntimeTaskImage = z.infer<typeof runtimeTaskImageSchema>;
 
-const runtimeLegacyTaskClineReasoningEffortSchema = z.enum(["default", "low", "medium", "high", "xhigh"]);
+const runtimeLegacyTaskClineReasoningEffortSchema = z.enum([
+	"default",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"minimal",
+	"max",
+]);
 
 function normalizeRuntimeTaskClineSettings(input: {
 	clineSettings?: RuntimeTaskClineSettings;
@@ -598,7 +606,7 @@ export const runtimeProjectShortcutSchema = z.object({
 });
 export type RuntimeProjectShortcut = z.infer<typeof runtimeProjectShortcutSchema>;
 
-export const runtimeClineOauthProviderSchema = z.enum(["cline", "oca", "openai-codex"]);
+export const runtimeClineOauthProviderSchema = z.enum(["cline", "cline-pass", "oca", "openai-codex"]);
 export type RuntimeClineOauthProvider = z.infer<typeof runtimeClineOauthProviderSchema>;
 
 export const runtimeClineProviderSettingsSchema = z.object({

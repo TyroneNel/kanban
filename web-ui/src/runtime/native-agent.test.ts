@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
 	getTaskAgentNavbarHint,
+	isClineOauthAuthenticated,
 	isClineProviderAuthenticated,
 	isNativeClineAgentSelected,
 	isTaskAgentSetupSatisfied,
@@ -255,5 +256,33 @@ describe("native-agent helpers", () => {
 		).toEqual([messageEvent.message]);
 		expect(selectTaskChatMessagesForTask("task-2", { "task-1": [messageEvent.message] })).toBeNull();
 		expect(selectTaskChatMessagesForTask(null, { "task-1": [messageEvent.message] })).toBeNull();
+	});
+});
+
+describe("isClineOauthAuthenticated", () => {
+	it("accepts the Cline usage-billing provider", () => {
+		expect(isClineOauthAuthenticated(createRuntimeConfigResponse("cline").clineProviderSettings)).toBe(true);
+	});
+
+	it("accepts the ClinePass subscription provider", () => {
+		const settings = createRuntimeConfigResponse("cline", {
+			clineProviderSettings: {
+				...createRuntimeConfigResponse("cline").clineProviderSettings,
+				providerId: "cline-pass",
+				oauthProvider: "cline-pass",
+			},
+		}).clineProviderSettings;
+		expect(isClineOauthAuthenticated(settings)).toBe(true);
+	});
+
+	it("rejects other oauth providers even when tokens are present", () => {
+		const settings = createRuntimeConfigResponse("cline", {
+			clineProviderSettings: {
+				...createRuntimeConfigResponse("cline").clineProviderSettings,
+				providerId: "openai-codex",
+				oauthProvider: "openai-codex",
+			},
+		}).clineProviderSettings;
+		expect(isClineOauthAuthenticated(settings)).toBe(false);
 	});
 });
