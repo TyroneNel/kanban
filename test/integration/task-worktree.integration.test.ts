@@ -517,6 +517,50 @@ describe.sequential("task-worktree integration", () => {
 		});
 	});
 
+	it("does not provision a shared directory that contains a credential at the top level", async () => {
+		await withTemporaryHome(async () => {
+			const { path: sandboxRoot, cleanup } = createTempDir("kanban-task-worktree-shared-nested-env-");
+			try {
+				const repoPath = join(sandboxRoot, "repo");
+				mkdirSync(join(repoPath, "config"), { recursive: true });
+				mkdirSync(join(repoPath, ".cline", "kanban"), { recursive: true });
+
+				runGit(repoPath, ["init"]);
+				runGit(repoPath, ["config", "user.name", "Kanban Test"]);
+				runGit(repoPath, ["config", "user.email", "kanban-test@example.com"]);
+
+				writeFileSync(join(repoPath, "README.md"), "hello\n", "utf8");
+				writeFileSync(join(repoPath, ".gitignore"), "/config/\n", "utf8");
+				writeFileSync(join(repoPath, "config", ".env"), "SECRET=not-for-agents\n", "utf8");
+				writeFileSync(join(repoPath, "config", "app.json"), "{}\n", "utf8");
+				writeFileSync(
+					join(repoPath, ".cline", "kanban", "config.json"),
+					JSON.stringify({ worktreeSharedDirectories: ["config"] }),
+					"utf8",
+				);
+
+				runGit(repoPath, ["add", "README.md", ".gitignore"]);
+				runGit(repoPath, ["commit", "-m", "init"]);
+
+				const ensured = await ensureTaskWorktreeIfDoesntExist({
+					cwd: repoPath,
+					taskId: "task-shared-nested-env",
+					baseRef: "HEAD",
+				});
+				expect(ensured.ok).toBe(true);
+				if (!ensured.ok || !ensured.path) {
+					throw new Error("Task worktree was not created");
+				}
+
+				expect(existsSync(join(ensured.path, "config"))).toBe(false);
+				expect(ensured.warning).toContain("config");
+				expect(ensured.warning).toContain(".env");
+			} finally {
+				cleanup();
+			}
+		});
+	});
+
 	it("provisions an allowlisted ignored path and keeps it ignored inside the worktree", async () => {
 		await withTemporaryHome(async () => {
 			const { path: sandboxRoot, cleanup } = createTempDir("kanban-task-worktree-allowlist-");
