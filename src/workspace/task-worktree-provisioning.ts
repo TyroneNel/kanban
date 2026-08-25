@@ -75,6 +75,20 @@ export function isCredentialRelativePath(relativePath: string): boolean {
 	});
 }
 
+export function listContainsCredentialBasename(names: readonly string[]): string[] {
+	const found: string[] = [];
+	const seen = new Set<string>();
+	for (const name of names) {
+		const basename = toWorktreeRelativePath(name).split("/")[0] ?? "";
+		if (!basename || seen.has(basename) || !isCredentialRelativePath(basename)) {
+			continue;
+		}
+		seen.add(basename);
+		found.push(basename);
+	}
+	return found;
+}
+
 export function parseWorktreeAllowlistFile(
 	content: string,
 	byteLength = Buffer.byteLength(content),
@@ -196,5 +210,18 @@ export function formatUnprovisionedIgnoredPathWarning(relativePaths: readonly st
 	const pathList = namedPaths.map((path) => `"${path}"`).join(", ");
 	const extra = extraCount > 0 ? ` (and ${String(extraCount)} more)` : "";
 
-	return `Ignored path ${pathList}${extra} exists in the primary checkout but was not provisioned into the task worktree. Add the literal relative path to ${WORKTREE_ALLOWLIST_FILENAME} at the repository root to provision it. Credential filenames cannot be provisioned through worktreeSharedDirectories.`;
+	return `Ignored path ${pathList}${extra} exists in the primary checkout but was not provisioned into the task worktree. Add the literal relative path to ${WORKTREE_ALLOWLIST_FILENAME} at the repository root to provision it.`;
+}
+
+export function formatSharedDirectoryCredentialWarning(
+	relativePath: string,
+	credentialNames: readonly string[],
+): string | null {
+	const directory = toWorktreeRelativePath(relativePath);
+	const names = listContainsCredentialBasename(credentialNames);
+	if (!directory || names.length === 0) {
+		return null;
+	}
+	const named = names.map((name) => `"${name}"`).join(", ");
+	return `Shared directory "${directory}" was not provisioned because it contains ${named}. Do not share a directory that holds secrets.`;
 }

@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
 	DEFAULT_WORKTREE_SHARED_DIRECTORIES,
+	formatSharedDirectoryCredentialWarning,
 	formatUnprovisionedIgnoredPathWarning,
 	isCredentialRelativePath,
+	listContainsCredentialBasename,
 	parseWorktreeAllowlistFile,
 	selectIgnoredPathsToProvision,
 	shouldProvisionIgnoredPath,
@@ -56,6 +58,18 @@ describe("task-worktree provisioning allowlist", () => {
 				sharedDirectories: [".env", "node_modules"],
 			}),
 		).toBe(false);
+	});
+
+	it("detects credential basenames in a directory listing", () => {
+		expect(listContainsCredentialBasename(["README.md", ".env", "app.js"])).toEqual([".env"]);
+		expect(listContainsCredentialBasename(["package.json", ".bin"])).toEqual([]);
+	});
+
+	it("warns when a shared directory contains a credential basename", () => {
+		const warning = formatSharedDirectoryCredentialWarning("config", [".env"]);
+		expect(warning).toContain("config");
+		expect(warning).toContain(".env");
+		expect(warning).toContain("Do not share a directory that holds secrets");
 	});
 
 	it("provisions an allowlisted credential path only as an exact literal", () => {
