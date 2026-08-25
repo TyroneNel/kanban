@@ -1,6 +1,7 @@
 import { access, lstat, mkdir, readdir, readFile, rm, symlink } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 
+import { getRuntimeProjectConfigPath } from "../config/runtime-config";
 import type {
 	RuntimeTaskWorkspaceInfoResponse,
 	RuntimeWorktreeDeleteResponse,
@@ -10,6 +11,14 @@ import { type LockRequest, lockedFileSystem } from "../fs/locked-file-system";
 import { getRuntimeHomePath, getTaskWorktreesHomePath, loadWorkspaceContext } from "../state/workspace-state";
 import { getGitCommandErrorMessage, getGitStdout, readGitHeadInfo, runGit } from "./git-utils";
 import { getWorkspaceFolderLabelForWorktreePath, normalizeTaskIdForWorktreePath } from "./task-worktree-path";
+import {
+	DEFAULT_WORKTREE_SHARED_DIRECTORIES,
+	formatUnprovisionedIgnoredPathWarning,
+	normalizeWorktreeSharedDirectories,
+	parseWorktreeAllowlistFile,
+	selectIgnoredPathsToProvision,
+	WORKTREE_ALLOWLIST_FILENAME,
+} from "./task-worktree-provisioning";
 import { listTurbopackNodeModulesSymlinkSkipPaths } from "./task-worktree-turbopack";
 
 const KANBAN_MANAGED_EXCLUDE_BLOCK_START = "# kanban-managed-symlinked-ignored-paths:start";
@@ -282,6 +291,36 @@ async function listIgnoredPaths(repoPath: string): Promise<string[]> {
 		.filter((line) => line.length > 0);
 }
 
+async function loadWorktreeAllowlistedPaths(repoPath: string): Promise<string[]> {
+	const allowlistPath = join(repoPath, WORKTREE_ALLOWLIST_FILENAME);
+	try {
+		const content = await readFile(allowlistPath, "utf8");
+		return parseWorktreeAllowlistFile(content, Buffer.byteLength(content)).paths;
+	} catch {
+		return [];
+	}
+}
+
+async function loadWorktreeSharedDirectories(repoPath: string): Promise<string[]> {
+	try {
+		const raw = await readFile(getRuntimeProjectConfigPath(repoPath), "utf8");
+		const parsed: unknown = JSON.parse(raw);
+		const sharedDirectories =
+			parsed && typeof parsed === "object" && !Array.isArray(parsed)
+				? (parsed as { worktreeSharedDirectories?: unknown }).worktreeSharedDirectories
+				: undefined;
+		const normalized = normalizeWorktreeSharedDirectories(sharedDirectories);
+		return normalized ?? [...DEFAULT_WORKTREE_SHARED_DIRECTORIES];
+	} catch {
+		return [...DEFAULT_WORKTREE_SHARED_DIRECTORIES];
+	}
+}
+
+function joinWorktreeWarnings(...warnings: Array<string | null | undefined>): string | undefined {
+	const parts = warnings.map((warning) => warning?.trim()).filter((warning): warning is string => Boolean(warning));
+	return parts.length > 0 ? parts.join(" ") : undefined;
+}
+
 async function worktreeHasConfiguredSubmodules(worktreePath: string): Promise<boolean> {
 	const gitmodulesPath = join(worktreePath, ".gitmodules");
 	if (!(await pathExists(gitmodulesPath))) {
@@ -355,12 +394,26 @@ async function syncManagedIgnoredPathExcludes(repoPath: string, relativePaths: s
 	await lockedFileSystem.writeTextFileAtomic(excludePath, normalizedNextContent);
 }
 
-async function syncIgnoredPathsIntoWorktree(repoPath: string, worktreePath: string): Promise<void> {
+async function syncIgnoredPathsIntoWorktree(repoPath: string, worktreePath: string): Promise<string | undefined> {
 	const ignoredPaths = getUniquePaths(await listIgnoredPaths(repoPath)).filter(
 		(relativePath) => !shouldSkipSymlink(relativePath),
 	);
 	const turbopackNodeModulesSkipPaths = new Set(await listTurbopackNodeModulesSymlinkSkipPaths(repoPath));
-	const mirroredIgnoredPaths = ignoredPaths.filter((relativePath) => !turbopackNodeModulesSkipPaths.has(relativePath));
+	const candidatePaths = ignoredPaths.filter((relativePath) => !turbopackNodeModulesSkipPaths.has(relativePath));
+	const mirroredIgnoredPaths = selectIgnoredPathsToProvision(candidatePaths, {
+		allowlistedPaths: await loadWorktreeAllowlistedPaths(repoPath),
+		sharedDirectories: await loadWorktreeSharedDirectories(repoPath),
+	});
+
+	const unprovisionedExistingPaths: string[] = [];
+	for (const relativePath of candidatePaths) {
+		if (mirroredIgnoredPaths.includes(relativePath)) {
+			continue;
+		}
+		if (await pathExists(join(repoPath, relativePath))) {
+			unprovisionedExistingPaths.push(relativePath);
+		}
+	}
 
 	await syncManagedIgnoredPathExcludes(repoPath, mirroredIgnoredPaths);
 	for (const relativePath of mirroredIgnoredPaths) {
@@ -386,6 +439,8 @@ async function syncIgnoredPathsIntoWorktree(repoPath: string, worktreePath: stri
 			isDirectory: sourceStat.isDirectory(),
 		});
 	}
+
+	return formatUnprovisionedIgnoredPathWarning(unprovisionedExistingPaths) ?? undefined;
 }
 
 async function initializeSubmodulesIfNeeded(worktreePath: string): Promise<void> {
@@ -396,10 +451,10 @@ async function initializeSubmodulesIfNeeded(worktreePath: string): Promise<void>
 	await getGitStdout(["submodule", "update", "--init", "--recursive"], worktreePath);
 }
 
-async function prepareNewTaskWorktree(repoPath: string, worktreePath: string): Promise<void> {
+async function prepareNewTaskWorktree(repoPath: string, worktreePath: string): Promise<string | undefined> {
 	try {
 		await initializeSubmodulesIfNeeded(worktreePath);
-		await syncIgnoredPathsIntoWorktree(repoPath, worktreePath);
+		return await syncIgnoredPathsIntoWorktree(repoPath, worktreePath);
 	} catch (error) {
 		await removeTaskWorktreeInternal(repoPath, worktreePath).catch(() => {});
 		throw error;
@@ -449,24 +504,26 @@ export async function ensureTaskWorktreeIfDoesntExist(options: {
 		// worktrees are now treated as authoritative and only missing worktrees are created.
 		const existingResult = await runGit(worktreePath, ["rev-parse", "HEAD"]);
 		if (existingResult.ok && existingResult.stdout) {
-			await syncIgnoredPathsIntoWorktree(context.repoPath, worktreePath);
+			const warning = await syncIgnoredPathsIntoWorktree(context.repoPath, worktreePath);
 			return {
 				ok: true,
 				path: worktreePath,
 				baseRef: options.baseRef.trim(),
 				baseCommit: existingResult.stdout,
+				warning,
 			};
 		}
 
 		return await withTaskWorktreeSetupLock(context.repoPath, async () => {
 			const lockedExistingCommit = await tryRunGit(worktreePath, ["rev-parse", "HEAD"]);
 			if (lockedExistingCommit) {
-				await syncIgnoredPathsIntoWorktree(context.repoPath, worktreePath);
+				const warning = await syncIgnoredPathsIntoWorktree(context.repoPath, worktreePath);
 				return {
 					ok: true,
 					path: worktreePath,
 					baseRef: options.baseRef.trim(),
 					baseCommit: lockedExistingCommit,
+					warning,
 				};
 			}
 
@@ -531,7 +588,7 @@ export async function ensureTaskWorktreeIfDoesntExist(options: {
 					"Could not restore the saved task patch onto its original commit. Started from the task base ref instead.";
 				await getGitStdout(["worktree", "add", "--detach", worktreePath, baseCommit], context.repoPath);
 			}
-			await prepareNewTaskWorktree(context.repoPath, worktreePath);
+			const provisioningWarning = await prepareNewTaskWorktree(context.repoPath, worktreePath);
 
 			if (storedPatch && baseCommit === storedPatch.commit) {
 				try {
@@ -547,7 +604,7 @@ export async function ensureTaskWorktreeIfDoesntExist(options: {
 				path: worktreePath,
 				baseRef: requestedBaseRef,
 				baseCommit,
-				warning,
+				warning: joinWorktreeWarnings(provisioningWarning, warning),
 			};
 		});
 	} catch (error) {
