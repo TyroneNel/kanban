@@ -3,24 +3,9 @@ import {
 	CLINE_PASS_PROVIDER_ID,
 	CLINE_PROVIDER_ID,
 	isClineAccountProviderId,
-	isClinePassProviderId,
 	resolveClineOauthIdentityProviderId,
 } from "../../../src/cline-sdk/cline-pass-provider";
 import { getProviderAuthStorageId } from "../../../src/cline-sdk/sdk-provider-boundary";
-
-describe("isClinePassProviderId", () => {
-	it("matches the ClinePass provider id regardless of casing and padding", () => {
-		expect(isClinePassProviderId("cline-pass")).toBe(true);
-		expect(isClinePassProviderId(" Cline-Pass ")).toBe(true);
-	});
-
-	it("does not match other providers or missing ids", () => {
-		expect(isClinePassProviderId("cline")).toBe(false);
-		expect(isClinePassProviderId("clinepass")).toBe(false);
-		expect(isClinePassProviderId(null)).toBe(false);
-		expect(isClinePassProviderId(undefined)).toBe(false);
-	});
-});
 
 describe("isClineAccountProviderId", () => {
 	it("accepts both providers that authenticate with a Cline account", () => {

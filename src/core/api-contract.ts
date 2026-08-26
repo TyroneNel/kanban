@@ -98,7 +98,9 @@ export const runtimeTaskAutoReviewModeSchema = z.preprocess(
 );
 export type RuntimeTaskAutoReviewMode = z.infer<typeof runtimeTaskAutoReviewModeEnum>;
 
-export const runtimeClineReasoningEffortSchema = z.enum(["low", "medium", "high", "xhigh", "minimal", "max"]);
+// Declaration order is user-facing: the CLI help text and parse errors derive
+// from .options, and web-ui mirrors this sequence. Keep it ascending minimal -> max.
+export const runtimeClineReasoningEffortSchema = z.enum(["minimal", "low", "medium", "high", "xhigh", "max"]);
 export type RuntimeClineReasoningEffort = z.infer<typeof runtimeClineReasoningEffortSchema>;
 // Opaque per-task agent settings. Kanban stores and carries these values verbatim; it never
 // validates model IDs or reasoning-effort vocabularies because those change per agent and over
@@ -119,11 +121,11 @@ export type RuntimeTaskImage = z.infer<typeof runtimeTaskImageSchema>;
 
 const runtimeLegacyTaskClineReasoningEffortSchema = z.enum([
 	"default",
+	"minimal",
 	"low",
 	"medium",
 	"high",
 	"xhigh",
-	"minimal",
 	"max",
 ]);
 

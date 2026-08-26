@@ -20,6 +20,7 @@ import type {
 	RuntimeClineProviderSettingsSaveResponse,
 	RuntimeClineReasoningEffort,
 } from "../core/api-contract";
+import { runtimeClineOauthProviderSchema } from "../core/api-contract";
 import { openInBrowser } from "../server/browser";
 import { CLINE_PASS_PROVIDER_ID, CLINE_PASS_PROVIDER_NAME, isClineAccountProviderId } from "./cline-pass-provider";
 import { createKanbanClineLogger } from "./cline-runtime-logger";
@@ -122,12 +123,7 @@ function parseClineRemoteConfigValue(value: string): ClineRemoteConfig {
 }
 
 function isManagedOauthProviderId(providerId: string): providerId is ManagedClineOauthProviderId {
-	return (
-		providerId === "cline" ||
-		providerId === CLINE_PASS_PROVIDER_ID ||
-		providerId === "oca" ||
-		providerId === "openai-codex"
-	);
+	return runtimeClineOauthProviderSchema.safeParse(providerId).success;
 }
 
 function formatManagedProviderDisplayName(providerId: ManagedClineOauthProviderId): string {

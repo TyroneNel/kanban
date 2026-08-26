@@ -1,4 +1,5 @@
 import type { SearchSelectOption } from "@/components/search-select-dropdown";
+import { CLINE_REASONING_EFFORT_LABELS, CLINE_REASONING_EFFORT_VALUES } from "@/runtime/cline-reasoning-effort";
 import type { RuntimeClineProviderModel } from "@/runtime/types";
 
 const CLINE_PROVIDER_ID = "cline";
@@ -19,12 +20,10 @@ const CLINE_MODEL_NAME_BY_ID: Record<string, string> = {
 
 export const CLINE_REASONING_EFFORT_OPTIONS: SearchSelectOption[] = [
 	{ value: "", label: "Default" },
-	{ value: "minimal", label: "Minimal" },
-	{ value: "low", label: "Low" },
-	{ value: "medium", label: "Medium" },
-	{ value: "high", label: "High" },
-	{ value: "xhigh", label: "Extra high" },
-	{ value: "max", label: "Max" },
+	...CLINE_REASONING_EFFORT_VALUES.map((effort) => ({
+		value: effort,
+		label: CLINE_REASONING_EFFORT_LABELS[effort],
+	})),
 ];
 
 export interface BuildClineAgentModelPickerOptionsResult {

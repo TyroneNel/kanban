@@ -13,10 +13,6 @@ export const CLINE_PROVIDER_ID = "cline";
 export const CLINE_PASS_PROVIDER_ID = "cline-pass";
 export const CLINE_PASS_PROVIDER_NAME = "ClinePass";
 
-export function isClinePassProviderId(providerId: string | null | undefined): boolean {
-	return providerId?.trim().toLowerCase() === CLINE_PASS_PROVIDER_ID;
-}
-
 export function isClineAccountProviderId(providerId: string | null | undefined): boolean {
 	const normalizedProviderId = providerId?.trim().toLowerCase();
 	return normalizedProviderId === CLINE_PROVIDER_ID || normalizedProviderId === CLINE_PASS_PROVIDER_ID;

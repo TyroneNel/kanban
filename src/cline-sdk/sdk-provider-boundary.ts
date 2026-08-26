@@ -33,10 +33,16 @@ import {
 import type { AgentTool } from "@cline/shared";
 import { isClineAccountProviderId, resolveClineOauthIdentityProviderId } from "./cline-pass-provider";
 
+// Re-exported so consumers (currently cline-pass-provider.test.ts) do not import
+// @cline/core past this boundary; docs/architecture.md reserves direct @cline/*
+// imports for the two boundary modules.
 export { getProviderAuthStorageId } from "@cline/core";
 
-// @cline/core 0.0.79 stopped re-exporting these OCA IDCS defaults from the package
-// root. Values match dist/auth/oca.d.ts in that release.
+// @cline/core does not expose its OCA IDCS defaults: the package `exports` map
+// only publishes ".", "./hub", "./telemetry" and "./services/*", so there is no
+// importable path to dist/auth/oca. Values are copied from dist/auth/oca.d.ts of
+// the installed release; sdk-oca-idcs-defaults.test.ts reads node_modules at
+// runtime so a bump that changes them fails the suite.
 const DEFAULT_INTERNAL_IDCS_CLIENT_ID = "a8331954c0cf48ba99b5dd223a14c6ea";
 const DEFAULT_INTERNAL_IDCS_URL = "https://idcs-9dc693e80d9b469480d7afe00e743931.identity.oraclecloud.com";
 const DEFAULT_INTERNAL_IDCS_SCOPES = "openid offline_access";
