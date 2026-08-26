@@ -142,12 +142,18 @@ export interface UseRuntimeSettingsClineControllerResult {
 	runOauthLogin: () => Promise<SaveResult>;
 }
 
+// A new provider in the contract union fails to compile here, not at runtime.
+const MANAGED_CLINE_OAUTH_PROVIDERS: Record<RuntimeClineOauthProvider, true> = {
+	cline: true,
+	"cline-pass": true,
+	oca: true,
+	"openai-codex": true,
+};
+const MANAGED_CLINE_OAUTH_PROVIDER_IDS = Object.keys(MANAGED_CLINE_OAUTH_PROVIDERS) as RuntimeClineOauthProvider[];
+
 function toManagedClineOauthProvider(value: string): RuntimeClineOauthProvider | null {
 	const normalized = value.trim().toLowerCase();
-	if (normalized === "cline" || normalized === "oca" || normalized === "openai-codex") {
-		return normalized;
-	}
-	return null;
+	return MANAGED_CLINE_OAUTH_PROVIDER_IDS.find((providerId) => providerId === normalized) ?? null;
 }
 
 function normalizeBaseUrlForProvider(providerId: string, baseUrl: string | null | undefined): string {

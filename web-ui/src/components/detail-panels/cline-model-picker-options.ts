@@ -1,28 +1,29 @@
 import type { SearchSelectOption } from "@/components/search-select-dropdown";
+import { CLINE_REASONING_EFFORT_LABELS, CLINE_REASONING_EFFORT_VALUES } from "@/runtime/cline-reasoning-effort";
 import type { RuntimeClineProviderModel, RuntimeClineReasoningEffort } from "@/runtime/types";
 
 const CLINE_PROVIDER_ID = "cline";
 
 export const CLINE_RECOMMENDED_MODEL_IDS = [
-	"anthropic/claude-sonnet-4.6",
-	"anthropic/claude-opus-4.7",
+	"anthropic/claude-sonnet-5",
+	"anthropic/claude-opus-5",
 	"openai/gpt-5.5",
 	"deepseek/deepseek-v4-pro",
 ] as const;
 
 const CLINE_MODEL_NAME_BY_ID: Record<string, string> = {
-	"anthropic/claude-sonnet-4.6": "Claude Sonnet 4.6",
-	"anthropic/claude-opus-4.7": "Claude Opus 4.7",
+	"anthropic/claude-sonnet-5": "Claude Sonnet 5",
+	"anthropic/claude-opus-5": "Claude Opus 5",
 	"openai/gpt-5.5": "GPT-5.5",
 	"deepseek/deepseek-v4-pro": "DeepSeek V4 Pro",
 };
 
 export const CLINE_REASONING_EFFORT_OPTIONS: SearchSelectOption[] = [
 	{ value: "", label: "Default" },
-	{ value: "low", label: "Low" },
-	{ value: "medium", label: "Medium" },
-	{ value: "high", label: "High" },
-	{ value: "xhigh", label: "Extra high" },
+	...CLINE_REASONING_EFFORT_VALUES.map((effort) => ({
+		value: effort,
+		label: CLINE_REASONING_EFFORT_LABELS[effort],
+	})),
 ];
 
 export interface BuildClineAgentModelPickerOptionsResult {

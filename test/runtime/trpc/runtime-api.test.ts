@@ -71,7 +71,7 @@ vi.mock("../../../src/workspace/turn-checkpoints.js", () => ({
 	captureTaskTurnCheckpoint: turnCheckpointMocks.captureTaskTurnCheckpoint,
 }));
 
-vi.mock("@clinebot/core", () => ({
+vi.mock("@cline/core", () => ({
 	addLocalProvider: oauthMocks.addLocalProvider,
 	ensureCustomProvidersLoaded: oauthMocks.ensureCustomProvidersLoaded,
 	getLocalProviderModels: localProviderMocks.getLocalProviderModels,
@@ -117,7 +117,7 @@ vi.mock("@clinebot/core", () => ({
 		resolveProviderModelCatalogKeys: llmsModelMocks.resolveProviderModelCatalogKeys,
 	},
 	LlmsModels: {
-		CLINE_DEFAULT_MODEL: "anthropic/claude-sonnet-4.6",
+		CLINE_DEFAULT_MODEL: "anthropic/claude-sonnet-5",
 		getAllProviders: llmsModelMocks.getAllProviders,
 		getModelsForProvider: llmsModelMocks.getModelsForProvider,
 	},
@@ -2318,6 +2318,45 @@ describe("createRuntimeApi startTaskSession", () => {
 		expect(clineAccountMocks.fetchRemoteConfig).toHaveBeenCalledTimes(2);
 	});
 
+	it("applies remote kanban access when ClinePass is selected", async () => {
+		const api = createTestRuntimeApi({
+			getActiveWorkspaceId: vi.fn(() => "workspace-1"),
+			loadScopedRuntimeConfig: vi.fn(async () => createRuntimeConfigState()),
+			setActiveRuntimeConfig: vi.fn(),
+			getScopedTerminalManager: vi.fn(async () => ({}) as never),
+			getScopedClineTaskSessionService: vi.fn(async () => createClineTaskSessionServiceMock() as never),
+			resolveInteractiveShellCommand: vi.fn(),
+			runCommand: vi.fn(),
+		});
+		setSelectedProviderSettings({
+			provider: "cline-pass",
+			auth: {
+				accessToken: "workos:pass-access",
+				refreshToken: "pass-refresh",
+				accountId: "acct-1",
+				expiresAt: 1_700_000_000_000,
+			},
+		});
+		clineAccountMocks.fetchRemoteConfig.mockResolvedValueOnce({
+			organizationId: "org-1",
+			enabled: true,
+			value: JSON.stringify({
+				kanbanEnabled: false,
+			}),
+		});
+		clineAccountMocks.fetchOrganization.mockResolvedValueOnce({
+			externalOrganizationId: "test",
+		});
+
+		const response = await api.getClineKanbanAccess({
+			workspaceId: "workspace-1",
+			workspacePath: "/tmp/repo",
+		});
+
+		expect(response.enabled).toBe(false);
+		expect(clineAccountMocks.fetchRemoteConfig).toHaveBeenCalledTimes(1);
+	});
+
 	it("allows kanban by default for non-cline providers", async () => {
 		const api = createTestRuntimeApi({
 			getActiveWorkspaceId: vi.fn(() => "workspace-1"),
@@ -2780,6 +2819,37 @@ describe("createRuntimeApi getFeaturebaseToken", () => {
 				workspacePath: "/tmp/repo",
 			}),
 		).rejects.toThrow("Failed to fetch Featurebase token.");
+	});
+
+	it("returns JWT when ClinePass is selected", async () => {
+		const api = createTestRuntimeApi({
+			getActiveWorkspaceId: vi.fn(() => "workspace-1"),
+			loadScopedRuntimeConfig: vi.fn(async () => createRuntimeConfigState()),
+			setActiveRuntimeConfig: vi.fn(),
+			getScopedTerminalManager: vi.fn(async () => ({}) as never),
+			getScopedClineTaskSessionService: vi.fn(async () => createClineTaskSessionServiceMock() as never),
+			resolveInteractiveShellCommand: vi.fn(),
+			runCommand: vi.fn(),
+		});
+		setSelectedProviderSettings({
+			provider: "cline-pass",
+			auth: {
+				accessToken: "workos:pass-access",
+				refreshToken: "pass-refresh",
+				accountId: "acct-1",
+				expiresAt: 1_700_000_000_000,
+			},
+		});
+		clineAccountMocks.fetchFeaturebaseToken.mockResolvedValueOnce({
+			featurebaseJwt: "jwt-pass-123",
+		});
+
+		const response = await api.getFeaturebaseToken({
+			workspaceId: "workspace-1",
+			workspacePath: "/tmp/repo",
+		});
+
+		expect(response).toEqual({ featurebaseJwt: "jwt-pass-123" });
 	});
 
 	it("throws when provider is not cline", async () => {

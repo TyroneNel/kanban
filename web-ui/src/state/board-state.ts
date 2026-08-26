@@ -3,6 +3,7 @@ import { createShortTaskId } from "@runtime-task-id";
 import * as runtimeTaskState from "@runtime-task-state";
 
 import { createInitialBoardData } from "@/data/board-data";
+import { parseClineReasoningEffort } from "@/runtime/cline-reasoning-effort";
 import type { RuntimeAgentId, RuntimeClineReasoningEffort, RuntimeTaskClineSettings } from "@/runtime/types";
 import { isAllowedCrossColumnCardMove, type ProgrammaticCardMoveInFlight } from "@/state/drag-rules";
 import {
@@ -96,18 +97,6 @@ function normalizeTaskImages(rawImages: unknown): TaskImage[] | undefined {
 	return images.length > 0 ? images : undefined;
 }
 
-function normalizeTaskClineReasoningEffort(rawReasoningEffort: unknown): RuntimeClineReasoningEffort | undefined {
-	if (
-		rawReasoningEffort === "low" ||
-		rawReasoningEffort === "medium" ||
-		rawReasoningEffort === "high" ||
-		rawReasoningEffort === "xhigh"
-	) {
-		return rawReasoningEffort;
-	}
-	return undefined;
-}
-
 function normalizeTaskClineSettings(input: {
 	rawSettings?: unknown;
 	legacyProviderId?: unknown;
@@ -122,7 +111,7 @@ function normalizeTaskClineSettings(input: {
 		};
 		const providerId = typeof settings.providerId === "string" ? settings.providerId.trim() : "";
 		const modelId = typeof settings.modelId === "string" ? settings.modelId.trim() : "";
-		const reasoningEffort = normalizeTaskClineReasoningEffort(settings.reasoningEffort);
+		const reasoningEffort = parseClineReasoningEffort(settings.reasoningEffort);
 		return {
 			...(providerId ? { providerId } : {}),
 			...(modelId ? { modelId } : {}),
@@ -132,7 +121,7 @@ function normalizeTaskClineSettings(input: {
 
 	const legacyProviderId = typeof input.legacyProviderId === "string" ? input.legacyProviderId.trim() : "";
 	const legacyModelId = typeof input.legacyModelId === "string" ? input.legacyModelId.trim() : "";
-	const reasoningEffort = normalizeTaskClineReasoningEffort(input.legacyReasoningEffort);
+	const reasoningEffort = parseClineReasoningEffort(input.legacyReasoningEffort);
 	if (!legacyProviderId && !legacyModelId && input.legacyReasoningEffort !== "default" && !reasoningEffort) {
 		return undefined;
 	}

@@ -4,7 +4,7 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import * as ClineCore from "@clinebot/core";
+import * as ClineCore from "@cline/core";
 import {
 	addLocalProvider,
 	type ClineAccountBalance,
@@ -14,12 +14,6 @@ import {
 	type ClineOrganization,
 	type CreateMcpToolsOptions,
 	createMcpTools,
-	DEFAULT_EXTERNAL_IDCS_CLIENT_ID,
-	DEFAULT_EXTERNAL_IDCS_SCOPES,
-	DEFAULT_EXTERNAL_IDCS_URL,
-	DEFAULT_INTERNAL_IDCS_CLIENT_ID,
-	DEFAULT_INTERNAL_IDCS_SCOPES,
-	DEFAULT_INTERNAL_IDCS_URL,
 	ensureCustomProvidersLoaded,
 	getLocalProviderModels,
 	getValidClineCredentials,
@@ -35,13 +29,31 @@ import {
 	resolveProviderConfig,
 	completeClineDeviceAuth as sdkCompleteClineDeviceAuth,
 	startClineDeviceAuth as sdkStartClineDeviceAuth,
-} from "@clinebot/core";
-import type { AgentTool } from "@clinebot/shared";
+} from "@cline/core";
+import type { AgentTool } from "@cline/shared";
+import { isClineAccountProviderId, resolveClineOauthIdentityProviderId } from "./cline-pass-provider";
 
-export type ManagedClineOauthProviderId = "cline" | "oca" | "openai-codex";
+// Re-exported so consumers (currently cline-pass-provider.test.ts) do not import
+// @cline/core past this boundary; docs/architecture.md reserves direct @cline/*
+// imports for the two boundary modules.
+export { getProviderAuthStorageId } from "@cline/core";
+
+// @cline/core does not expose its OCA IDCS defaults: the package `exports` map
+// only publishes ".", "./hub", "./telemetry" and "./services/*", so there is no
+// importable path to dist/auth/oca. Values are copied from dist/auth/oca.d.ts of
+// the installed release; sdk-oca-idcs-defaults.test.ts reads node_modules at
+// runtime so a bump that changes them fails the suite.
+const DEFAULT_INTERNAL_IDCS_CLIENT_ID = "a8331954c0cf48ba99b5dd223a14c6ea";
+const DEFAULT_INTERNAL_IDCS_URL = "https://idcs-9dc693e80d9b469480d7afe00e743931.identity.oraclecloud.com";
+const DEFAULT_INTERNAL_IDCS_SCOPES = "openid offline_access";
+const DEFAULT_EXTERNAL_IDCS_CLIENT_ID = "c1aba3deed5740659981a752714eba33";
+const DEFAULT_EXTERNAL_IDCS_URL = "https://login-ext.identity.oraclecloud.com";
+const DEFAULT_EXTERNAL_IDCS_SCOPES = "openid offline_access";
+
+export type ManagedClineOauthProviderId = "cline" | "cline-pass" | "oca" | "openai-codex";
 export type SdkReasoningEffort = NonNullable<NonNullable<ProviderSettings["reasoning"]>["effort"]>;
 export const SDK_DEFAULT_PROVIDER_ID = "cline";
-export const SDK_DEFAULT_MODEL_ID = "anthropic/claude-sonnet-4.6";
+export const SDK_DEFAULT_MODEL_ID = "anthropic/claude-sonnet-5";
 export const CLINE_MODEL_CATALOG_DEFAULTS = {
 	loadLatestOnInit: true,
 	loadPrivateOnAuth: true,
@@ -235,10 +247,10 @@ export async function refreshManagedOauthCredentials(input: {
 	baseUrl?: string | null;
 	oauthProvider?: string | null;
 }): Promise<ManagedOauthCredentials | null> {
-	if (input.providerId === "cline") {
+	if (isClineAccountProviderId(input.providerId)) {
 		const credentials = await getValidClineCredentials(input.currentCredentials, {
 			apiBaseUrl: input.baseUrl?.trim() || "https://api.cline.bot",
-			provider: input.oauthProvider?.trim() || undefined,
+			provider: resolveClineOauthIdentityProviderId(input.oauthProvider?.trim() || input.providerId),
 		});
 		return credentials ?? null;
 	}
@@ -262,10 +274,10 @@ export async function loginManagedOauthProvider(input: {
 	oauthProvider?: string | null;
 	callbacks: ManagedOauthCallbacks;
 }): Promise<ManagedOauthCredentials> {
-	if (input.providerId === "cline") {
+	if (isClineAccountProviderId(input.providerId)) {
 		return await loginClineOAuth({
 			apiBaseUrl: input.baseUrl?.trim() || "https://api.cline.bot",
-			provider: input.oauthProvider?.trim() || undefined,
+			provider: resolveClineOauthIdentityProviderId(input.oauthProvider?.trim() || input.providerId),
 			callbacks: input.callbacks,
 		});
 	}
@@ -347,7 +359,7 @@ function mergeSdkProviderModels(models: SdkProviderModel[]): SdkProviderModel[] 
 	return [...modelById.values()];
 }
 
-// Temporary compatibility path for @clinebot/core 0.0.36. Once the SDK makes
+// Temporary compatibility path for catalog refresh. Once the SDK makes
 // getLocalProviderModels honor loadLatestOnInit and applies live catalog lookups
 // through resolveProviderModelCatalogKeys, replace this with a single SDK call
 // using CLINE_MODEL_CATALOG_DEFAULTS.
@@ -626,7 +638,7 @@ export function saveSdkProviderSettings(input: SaveSdkProviderSettingsInput): vo
 export function createSdkInMemoryMcpManager(options: SdkMcpManagerOptions): SdkMcpManager {
 	const managerConstructor = InMemoryMcpManager;
 	if (!managerConstructor) {
-		throw new Error("InMemoryMcpManager is not available from @clinebot/core/node.");
+		throw new Error("InMemoryMcpManager is not available from @cline/core.");
 	}
 	return new managerConstructor(options);
 }
@@ -676,7 +688,7 @@ export async function fetchSdkClineUserRemoteConfig(
 ): Promise<SdkUserRemoteConfigResponse | null> {
 	const accountServiceConstructor = ClineAccountService;
 	if (!accountServiceConstructor) {
-		throw new Error("ClineAccountService is not available from @clinebot/core/node.");
+		throw new Error("ClineAccountService is not available from @cline/core.");
 	}
 	const accountService = new accountServiceConstructor({
 		apiBaseUrl: input.apiBaseUrl,

@@ -52,7 +52,16 @@
 							"options": {
 								"patterns": [
 									{
-										"group": ["@clinebot/core", "@clinebot/core/**"],
+										"group": [
+											"@cline/core",
+											"@cline/core/**",
+											"@cline/shared",
+											"@cline/shared/**",
+											"@cline/llms",
+											"@cline/llms/**",
+											"@cline/agents",
+											"@cline/agents/**"
+										],
 										"message": "Import Cline SDK packages only through src/cline-sdk/sdk-provider-boundary.ts or src/cline-sdk/sdk-runtime-boundary.ts."
 									}
 								]

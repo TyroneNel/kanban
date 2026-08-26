@@ -15,30 +15,35 @@ const oauthMocks = vi.hoisted(() => ({
 	saveProviderSettings: vi.fn(),
 	getProviderSettings: vi.fn(),
 	getLastUsedProviderSettings: vi.fn(),
+	getValidClineCredentials: vi.fn(),
+	loginClineOAuth: vi.fn(),
 }));
 
 const llmsModelMocks = vi.hoisted(() => ({
 	getAllProviders: vi.fn(),
 	getModelsForProvider: vi.fn(),
+	resolveProviderConfig: vi.fn(),
+	resolveProviderModelCatalogKeys: vi.fn((providerId: string) => [providerId]),
 }));
 
 const localProviderMocks = vi.hoisted(() => ({
 	getLocalProviderModels: vi.fn(),
 }));
 
-vi.mock("@clinebot/core", () => ({
+vi.mock("@cline/core", () => ({
 	addLocalProvider: vi.fn(),
 	ensureCustomProvidersLoaded: vi.fn(),
 	getLocalProviderModels: localProviderMocks.getLocalProviderModels,
-	getValidClineCredentials: vi.fn(),
+	getValidClineCredentials: oauthMocks.getValidClineCredentials,
 	getValidOcaCredentials: vi.fn(),
 	getValidOpenAICodexCredentials: vi.fn(),
-	loginClineOAuth: vi.fn(),
+	loginClineOAuth: oauthMocks.loginClineOAuth,
 	loginOcaOAuth: vi.fn(),
 	loginOpenAICodex: vi.fn(),
 	resolveDefaultMcpSettingsPath: vi.fn(),
 	resolveClineDataDir: vi.fn(() => "/tmp/cline"),
 	loadMcpSettingsFile: vi.fn(),
+	resolveProviderConfig: llmsModelMocks.resolveProviderConfig,
 	ClineAccountService: class {
 		constructor(options: { apiBaseUrl: string; getAuthToken: () => Promise<string | undefined | null> }) {
 			clineAccountMocks.constructedOptions.push(options);
@@ -74,9 +79,10 @@ vi.mock("@clinebot/core", () => ({
 	Llms: {
 		getAllProviders: llmsModelMocks.getAllProviders,
 		getModelsForProvider: llmsModelMocks.getModelsForProvider,
+		resolveProviderModelCatalogKeys: llmsModelMocks.resolveProviderModelCatalogKeys,
 	},
 	LlmsModels: {
-		CLINE_DEFAULT_MODEL: "anthropic/claude-sonnet-4.6",
+		CLINE_DEFAULT_MODEL: "anthropic/claude-sonnet-5",
 		getAllProviders: llmsModelMocks.getAllProviders,
 		getModelsForProvider: llmsModelMocks.getModelsForProvider,
 	},
@@ -113,6 +119,7 @@ function setSelectedProviderSettings(
 			accountId?: string;
 			expiresAt?: number;
 		};
+		reasoning?: { effort?: string; enabled?: boolean };
 	} | null,
 ): void {
 	oauthMocks.getLastUsedProviderSettings.mockReturnValue(settings ?? undefined);
@@ -425,5 +432,269 @@ describe("switchClineAccount", () => {
 
 		expect(result.ok).toBe(false);
 		expect(result.error).toBeDefined();
+	});
+});
+
+describe("ClinePass account and launch", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		clineAccountMocks.constructedOptions = [];
+		vi.unstubAllEnvs();
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
+	it("reads the account balance when ClinePass is selected", async () => {
+		setSelectedProviderSettings({
+			provider: "cline-pass",
+			auth: { accessToken: "test-token" },
+		});
+		clineAccountMocks.fetchMe.mockResolvedValue({
+			id: "user-1",
+			email: "test@example.com",
+			displayName: "Test User",
+			organizations: [],
+		});
+		clineAccountMocks.fetchBalance.mockResolvedValue({ balance: 5_000_000, userId: "user-1" });
+
+		const result = await createClineProviderService().getClineAccountBalance();
+
+		expect(result).toEqual({
+			balance: 5_000_000,
+			activeAccountLabel: "Personal",
+			activeOrganizationId: null,
+		});
+	});
+
+	it("reports the ClinePass account profile", async () => {
+		setSelectedProviderSettings({
+			provider: "cline-pass",
+			auth: { accessToken: "test-token" },
+		});
+		clineAccountMocks.fetchMe.mockResolvedValue({
+			id: "user-1",
+			email: "test@example.com",
+			displayName: "Test User",
+		});
+
+		const result = await createClineProviderService().getClineAccountProfile();
+
+		expect(result.profile).toEqual({
+			accountId: "user-1",
+			email: "test@example.com",
+			displayName: "Test User",
+		});
+	});
+
+	it("uses CLINE_API_KEY when ClinePass has no saved credentials", async () => {
+		setSelectedProviderSettings({ provider: "cline-pass", model: "cline-pass/kimi-k3" });
+		vi.stubEnv("CLINE_API_KEY", "env-cline-key");
+
+		const result = await createClineProviderService().resolveLaunchConfig();
+
+		expect(result.providerId).toBe("cline-pass");
+		expect(result.modelId).toBe("cline-pass/kimi-k3");
+		expect(result.apiKey).toBe("env-cline-key");
+	});
+
+	it("names ClinePass in the error when no credentials are configured", async () => {
+		setSelectedProviderSettings({ provider: "cline-pass", model: "cline-pass/kimi-k3" });
+		vi.stubEnv("CLINE_API_KEY", "");
+
+		await expect(createClineProviderService().resolveLaunchConfig()).rejects.toThrow(/ClinePass/);
+	});
+
+	it("refreshes ClinePass through Cline identity OAuth", async () => {
+		setSelectedProviderSettings({
+			provider: "cline-pass",
+			model: "cline-pass/kimi-k3",
+			auth: {
+				accessToken: "test-token",
+				refreshToken: "refresh-token",
+			},
+		});
+		oauthMocks.getValidClineCredentials.mockResolvedValue({
+			access: "next-token",
+			refresh: "next-refresh",
+			expires: Date.now() + 60_000,
+		});
+
+		const result = await createClineProviderService().resolveLaunchConfig();
+
+		expect(oauthMocks.getValidClineCredentials).toHaveBeenCalledWith(
+			expect.objectContaining({ access: "test-token", refresh: "refresh-token" }),
+			expect.objectContaining({ provider: "cline" }),
+		);
+		expect(result.providerId).toBe("cline-pass");
+		expect(result.apiKey).toBe("workos:next-token");
+	});
+
+	it("signs ClinePass in through Cline OAuth", async () => {
+		oauthMocks.loginClineOAuth.mockResolvedValue({
+			access: "new-access",
+			refresh: "new-refresh",
+			expires: Date.now() + 60_000,
+		});
+
+		await createClineProviderService().runOauthLogin({ providerId: "cline-pass" });
+
+		expect(oauthMocks.loginClineOAuth).toHaveBeenCalledWith(
+			expect.objectContaining({
+				provider: "cline",
+			}),
+		);
+		expect(oauthMocks.saveProviderSettings).toHaveBeenCalledWith(
+			expect.objectContaining({
+				provider: "cline-pass",
+				auth: expect.objectContaining({
+					accessToken: "workos:new-access",
+					refreshToken: "new-refresh",
+				}),
+			}),
+			expect.anything(),
+		);
+	});
+
+	it("signs usage-billing Cline in through Cline OAuth and keeps settings keyed by cline", async () => {
+		oauthMocks.loginClineOAuth.mockResolvedValue({
+			access: "cline-access",
+			refresh: "cline-refresh",
+			expires: Date.now() + 60_000,
+		});
+
+		await createClineProviderService().runOauthLogin({ providerId: "cline" });
+
+		expect(oauthMocks.loginClineOAuth).toHaveBeenCalledWith(
+			expect.objectContaining({
+				provider: "cline",
+			}),
+		);
+		expect(oauthMocks.saveProviderSettings).toHaveBeenCalledWith(
+			expect.objectContaining({
+				provider: "cline",
+				auth: expect.objectContaining({
+					accessToken: "workos:cline-access",
+					refreshToken: "cline-refresh",
+				}),
+			}),
+			expect.anything(),
+		);
+	});
+
+	it("refreshes usage-billing Cline through Cline identity OAuth", async () => {
+		setSelectedProviderSettings({
+			provider: "cline",
+			model: "zai/glm-5.3",
+			auth: {
+				accessToken: "cline-token",
+				refreshToken: "cline-refresh",
+			},
+		});
+		oauthMocks.getValidClineCredentials.mockResolvedValue({
+			access: "next-cline-token",
+			refresh: "next-cline-refresh",
+			expires: Date.now() + 60_000,
+		});
+
+		const result = await createClineProviderService().resolveLaunchConfig();
+
+		expect(oauthMocks.getValidClineCredentials).toHaveBeenCalledWith(
+			expect.objectContaining({ access: "cline-token", refresh: "cline-refresh" }),
+			expect.objectContaining({ provider: "cline" }),
+		);
+		expect(result.providerId).toBe("cline");
+		expect(result.apiKey).toBe("workos:next-cline-token");
+	});
+});
+
+describe("Cline SDK catalog", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		llmsModelMocks.resolveProviderModelCatalogKeys.mockImplementation((providerId: string) => [providerId]);
+		llmsModelMocks.resolveProviderConfig.mockResolvedValue(undefined);
+		localProviderMocks.getLocalProviderModels.mockResolvedValue({ models: [] });
+	});
+
+	it("includes SDK ClinePass in the catalog without remapping it to cline", async () => {
+		setSelectedProviderSettings({ provider: "cline-pass", model: "cline-pass/kimi-k3" });
+		llmsModelMocks.getAllProviders.mockResolvedValue([
+			{
+				id: "cline",
+				name: "Cline Usage-Billing",
+				defaultModelId: "anthropic/claude-sonnet-5",
+				baseUrl: "https://api.cline.bot/api/v1",
+				capabilities: ["oauth"],
+				env: ["CLINE_API_KEY"],
+			},
+			{
+				id: "cline-pass",
+				name: "ClinePass",
+				defaultModelId: "stealth/ox-alpha",
+				baseUrl: "https://api.cline.bot/api/v1",
+				capabilities: ["oauth"],
+				env: ["CLINE_API_KEY"],
+			},
+		]);
+
+		const result = await createClineProviderService().getProviderCatalog();
+		const clinePass = result.providers.find((provider) => provider.id === "cline-pass");
+
+		expect(clinePass).toEqual(
+			expect.objectContaining({
+				id: "cline-pass",
+				name: "ClinePass",
+				oauthSupported: true,
+				enabled: true,
+				defaultModelId: "stealth/ox-alpha",
+			}),
+		);
+		expect(result.providers.some((provider) => provider.id === "cline")).toBe(true);
+	});
+
+	it("lists ClinePass models from the SDK catalog", async () => {
+		setSelectedProviderSettings({ provider: "cline-pass" });
+		llmsModelMocks.resolveProviderConfig.mockResolvedValue({
+			knownModels: {
+				"cline-pass/deepseek-v4-flash": {
+					name: "DeepSeek V4 Flash",
+					capabilities: ["reasoning"],
+				},
+				"cline-pass/glm-5.3": {
+					name: "GLM 5.3",
+					capabilities: ["reasoning"],
+				},
+			},
+		});
+
+		const result = await createClineProviderService().getProviderModels("cline-pass");
+
+		expect(result.providerId).toBe("cline-pass");
+		expect(result.models.map((model) => model.id)).toEqual(["cline-pass/deepseek-v4-flash", "cline-pass/glm-5.3"]);
+	});
+});
+
+describe("resolveLaunchConfig reasoning effort", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.unstubAllEnvs();
+		vi.stubEnv("CLINE_API_KEY", "env-cline-key");
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
+	it.each(["minimal", "max"] as const)("keeps SDK %s reasoning effort on launch config", async (effort) => {
+		setSelectedProviderSettings({
+			provider: "cline",
+			model: "zai/glm-5.3",
+			reasoning: { effort },
+		});
+
+		const result = await createClineProviderService().resolveLaunchConfig();
+
+		expect(result.reasoningEffort).toBe(effort);
 	});
 });
