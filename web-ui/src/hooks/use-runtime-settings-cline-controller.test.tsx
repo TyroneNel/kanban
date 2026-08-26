@@ -1293,6 +1293,117 @@ describe("useRuntimeSettingsClineController", () => {
 		expect(requireSnapshot(latestSnapshot).baseUrl).toBe("");
 	});
 
+	it("treats ClinePass as a managed OAuth provider", async () => {
+		const config = createRuntimeConfigResponse({
+			providerId: "cline-pass",
+			oauthProvider: "cline-pass",
+			modelId: "cline-pass/kimi-k3",
+		});
+		let latestSnapshot: HookSnapshot | null = null;
+		fetchClineProviderCatalogMock.mockResolvedValue([
+			{
+				id: "cline",
+				name: "Cline",
+				oauthSupported: true,
+				enabled: false,
+				defaultModelId: "anthropic/claude-sonnet-5",
+				baseUrl: "https://api.cline.bot/api/v1",
+			},
+			{
+				id: "cline-pass",
+				name: "ClinePass",
+				oauthSupported: true,
+				enabled: true,
+				defaultModelId: "stealth/ox-alpha",
+				baseUrl: "https://api.cline.bot/api/v1",
+			},
+		]);
+		fetchClineProviderModelsMock.mockResolvedValue([
+			{
+				id: "cline-pass/kimi-k3",
+				name: "Kimi K3",
+				supportsReasoningEffort: true,
+			},
+		]);
+
+		await act(async () => {
+			root.render(
+				<HookHarness
+					open={true}
+					workspaceId="workspace-1"
+					selectedAgentId="cline"
+					config={config}
+					onSnapshot={(snapshot) => {
+						latestSnapshot = snapshot;
+					}}
+				/>,
+			);
+			await flushAsyncWork();
+		});
+
+		await act(async () => {
+			await flushAsyncWork();
+		});
+
+		expect(fetchClineProviderModelsMock).toHaveBeenCalledWith("workspace-1", "cline-pass");
+		expect(requireSnapshot(latestSnapshot).providerId).toBe("cline-pass");
+		expect(requireSnapshot(latestSnapshot).isOauthProviderSelected).toBe(true);
+	});
+
+	it("uses browser OAuth for ClinePass even when accessing remotely", async () => {
+		isLocalhostAccessMock.mockReturnValue(false);
+		const config = createRuntimeConfigResponse({
+			providerId: "cline-pass",
+			oauthProvider: "cline-pass",
+			oauthAccessTokenConfigured: false,
+			oauthAccountId: null,
+			oauthExpiresAt: null,
+		});
+		let latestSnapshot: HookSnapshot | null = null;
+		runClineProviderOauthLoginMock.mockResolvedValue({
+			ok: true,
+			provider: "cline-pass",
+			settings: {
+				providerId: "cline-pass",
+				modelId: "cline-pass/kimi-k3",
+				baseUrl: null,
+				reasoningEffort: null,
+				apiKeyConfigured: false,
+				oauthProvider: "cline-pass",
+				oauthAccessTokenConfigured: true,
+				oauthRefreshTokenConfigured: true,
+				oauthAccountId: "acct-pass",
+				oauthExpiresAt: 123456789,
+			},
+		});
+
+		await act(async () => {
+			root.render(
+				<HookHarness
+					open={true}
+					workspaceId="workspace-1"
+					selectedAgentId="cline"
+					config={config}
+					onSnapshot={(snapshot) => {
+						latestSnapshot = snapshot;
+					}}
+				/>,
+			);
+			await flushAsyncWork();
+		});
+
+		await act(async () => {
+			expect(await requireSnapshot(latestSnapshot).runOauthLogin()).toEqual({ ok: true });
+		});
+
+		expect(runClineProviderOauthLoginMock).toHaveBeenCalledWith("workspace-1", {
+			provider: "cline-pass",
+		});
+		expect(startClineDeviceAuthMock).not.toHaveBeenCalled();
+		expect(requireSnapshot(latestSnapshot).oauthConfigured).toBe(true);
+		expect(requireSnapshot(latestSnapshot).oauthAccountId).toBe("acct-pass");
+	});
+
 	it("uses browser OAuth for cline provider when accessing from localhost", async () => {
 		isLocalhostAccessMock.mockReturnValue(true);
 		const config = createRuntimeConfigResponse({

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { runtimeBoardCardSchema } from "../../src/core/api-contract";
+import { parseRuntimeClineReasoningEffort } from "../../src/core/task-agent-settings";
 
 function parseCard(overrides: Record<string, unknown>) {
 	return runtimeBoardCardSchema.parse({
@@ -53,5 +54,24 @@ describe("runtimeBoardCardSchema agentSettings normalization", () => {
 			agentSettings: { reasoningEffort: "ultracode" },
 		});
 		expect(card.agentSettings).toEqual({ reasoningEffort: "ultracode" });
+	});
+
+	it("accepts legacy clineReasoningEffort minimal and max", () => {
+		const card = parseCard({
+			clineReasoningEffort: "minimal",
+		});
+		expect(card.agentSettings).toEqual({ reasoningEffort: "minimal" });
+	});
+});
+
+describe("parseRuntimeClineReasoningEffort", () => {
+	it("accepts the 0.0.79 Cline vocabulary including minimal and max", () => {
+		expect(parseRuntimeClineReasoningEffort("minimal")).toBe("minimal");
+		expect(parseRuntimeClineReasoningEffort("max")).toBe("max");
+		expect(parseRuntimeClineReasoningEffort("low")).toBe("low");
+	});
+
+	it("rejects opaque card values that Cline cannot launch with", () => {
+		expect(parseRuntimeClineReasoningEffort("ultracode")).toBeNull();
 	});
 });

@@ -33,19 +33,19 @@ git log --oneline --no-merges
 
 ### 3. Check for Cline SDK version changes
 
-Compare the `@clinebot/core` version in `package.json` at the last tag vs HEAD:
+Compare the `@cline/core` version in `package.json` at the last tag vs HEAD:
 
 ```bash
-git show <last-tag>:package.json  # extract @clinebot/core version
-cat package.json                   # extract current @clinebot/core version
+git show <last-tag>:package.json  # extract @cline/core version
+cat package.json                   # extract current @cline/core version
 ```
 
 If the version changed, gather the SDK changelog to include in the release notes:
 
 1. Look up the git commit hash for both the old and new versions:
    ```bash
-   npm view @clinebot/core@<old-version> gitHead
-   npm view @clinebot/core@<new-version> gitHead
+   npm view @cline/core@<old-version> gitHead
+   npm view @cline/core@<new-version> gitHead
    ```
    If `gitHead` is not available for the new version, use the commit from the SDK repo's version bump commit instead (e.g. search for "Cline SDK <version>" in the commit log).
 

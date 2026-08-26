@@ -98,7 +98,7 @@ export const runtimeTaskAutoReviewModeSchema = z.preprocess(
 );
 export type RuntimeTaskAutoReviewMode = z.infer<typeof runtimeTaskAutoReviewModeEnum>;
 
-export const runtimeClineReasoningEffortSchema = z.enum(["low", "medium", "high", "xhigh"]);
+export const runtimeClineReasoningEffortSchema = z.enum(["low", "medium", "high", "xhigh", "minimal", "max"]);
 export type RuntimeClineReasoningEffort = z.infer<typeof runtimeClineReasoningEffortSchema>;
 // Opaque per-task agent settings. Kanban stores and carries these values verbatim; it never
 // validates model IDs or reasoning-effort vocabularies because those change per agent and over
@@ -117,7 +117,15 @@ export const runtimeTaskImageSchema = z.object({
 });
 export type RuntimeTaskImage = z.infer<typeof runtimeTaskImageSchema>;
 
-const runtimeLegacyTaskClineReasoningEffortSchema = z.enum(["default", "low", "medium", "high", "xhigh"]);
+const runtimeLegacyTaskClineReasoningEffortSchema = z.enum([
+	"default",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"minimal",
+	"max",
+]);
 
 function normalizeRuntimeTaskAgentSettings(input: {
 	agentSettings?: RuntimeTaskAgentSettings;
@@ -629,7 +637,7 @@ export const runtimeProjectShortcutSchema = z.object({
 });
 export type RuntimeProjectShortcut = z.infer<typeof runtimeProjectShortcutSchema>;
 
-export const runtimeClineOauthProviderSchema = z.enum(["cline", "oca", "openai-codex"]);
+export const runtimeClineOauthProviderSchema = z.enum(["cline", "cline-pass", "oca", "openai-codex"]);
 export type RuntimeClineOauthProvider = z.infer<typeof runtimeClineOauthProviderSchema>;
 
 export const runtimeClineProviderSettingsSchema = z.object({

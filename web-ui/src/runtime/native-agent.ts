@@ -43,8 +43,9 @@ export function isClineProviderAuthenticated(settings: RuntimeClineProviderSetti
 }
 
 /**
- * Returns true only when the selected provider is the Cline managed OAuth
- * provider **and** an access token is configured.  This is stricter than
+ * Returns true only when the selected provider is a Cline account managed OAuth
+ * provider (`cline` usage billing or `cline-pass` subscription) **and** an
+ * access token is configured. This is stricter than
  * {@link isClineProviderAuthenticated} which accepts any configured provider
  * (Claude API key, Codex, etc.).
  *
@@ -56,7 +57,7 @@ export function isClineOauthAuthenticated(settings: RuntimeClineProviderSettings
 		return false;
 	}
 	return (
-		settings.oauthProvider === "cline" &&
+		(settings.oauthProvider === "cline" || settings.oauthProvider === "cline-pass") &&
 		settings.oauthAccessTokenConfigured === true &&
 		settings.oauthRefreshTokenConfigured === true
 	);

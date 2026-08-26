@@ -21,6 +21,7 @@ import type {
 	RuntimeClineReasoningEffort,
 } from "../core/api-contract";
 import { openInBrowser } from "../server/browser";
+import { CLINE_PASS_PROVIDER_ID, CLINE_PASS_PROVIDER_NAME, isClineAccountProviderId } from "./cline-pass-provider";
 import { createKanbanClineLogger } from "./cline-runtime-logger";
 import {
 	addSdkCustomProvider,
@@ -53,6 +54,7 @@ const WORKOS_TOKEN_PREFIX = "workos:";
 const DEFAULT_CLINE_API_BASE_URL = "https://api.cline.bot";
 const MANAGED_PROVIDER_ENV_KEYS: Record<ManagedClineOauthProviderId, readonly string[]> = {
 	cline: ["CLINE_API_KEY"],
+	"cline-pass": ["CLINE_API_KEY"],
 	oca: ["OCA_API_KEY"],
 	"openai-codex": [],
 };
@@ -120,12 +122,20 @@ function parseClineRemoteConfigValue(value: string): ClineRemoteConfig {
 }
 
 function isManagedOauthProviderId(providerId: string): providerId is ManagedClineOauthProviderId {
-	return providerId === "cline" || providerId === "oca" || providerId === "openai-codex";
+	return (
+		providerId === "cline" ||
+		providerId === CLINE_PASS_PROVIDER_ID ||
+		providerId === "oca" ||
+		providerId === "openai-codex"
+	);
 }
 
 function formatManagedProviderDisplayName(providerId: ManagedClineOauthProviderId): string {
 	if (providerId === "cline") {
 		return "Cline";
+	}
+	if (providerId === CLINE_PASS_PROVIDER_ID) {
+		return CLINE_PASS_PROVIDER_NAME;
 	}
 	if (providerId === "oca") {
 		return "Oracle Code Assist";
@@ -152,7 +162,7 @@ function ensureWorkosPrefix(accessToken: string): string {
 }
 
 function toProviderApiKey(providerId: ManagedClineOauthProviderId, accessToken: string): string {
-	if (providerId === "cline") {
+	if (isClineAccountProviderId(providerId)) {
 		return `${WORKOS_TOKEN_PREFIX}${accessToken}`;
 	}
 	return accessToken;
@@ -185,11 +195,21 @@ function readEnvApiKey(envKey: string): string | null {
 	return apiKey.length > 0 ? apiKey : null;
 }
 
+const RUNTIME_REASONING_EFFORT_BY_SDK = {
+	none: null,
+	minimal: "minimal",
+	low: "low",
+	medium: "medium",
+	high: "high",
+	xhigh: "xhigh",
+	max: "max",
+} satisfies Record<SdkReasoningEffort, RuntimeClineReasoningEffort | null>;
+
 function toRuntimeReasoningEffort(effort: SdkReasoningEffort | null | undefined): RuntimeClineReasoningEffort | null {
-	if (!effort || effort === "none") {
+	if (!effort) {
 		return null;
 	}
-	return effort;
+	return RUNTIME_REASONING_EFFORT_BY_SDK[effort];
 }
 
 function resolveManagedProviderEnvApiKey(providerId: ManagedClineOauthProviderId): string | null {
@@ -424,7 +444,7 @@ async function refreshManagedOauthSettings(
 	const nextCredentials = await refreshManagedOauthCredentials({
 		providerId,
 		currentCredentials: {
-			access: providerId === "cline" ? stripWorkosPrefix(accessToken) : accessToken,
+			access: isClineAccountProviderId(providerId) ? stripWorkosPrefix(accessToken) : accessToken,
 			refresh: refreshToken,
 			expires: normalizeEpochMs(settings.auth?.expiresAt),
 			accountId: settings.auth?.accountId ?? undefined,
@@ -505,7 +525,7 @@ export function createClineProviderService() {
 				}
 
 				const normalizedProviderId = selectedSettings.provider.trim().toLowerCase();
-				if (normalizedProviderId !== "cline") {
+				if (!isClineAccountProviderId(normalizedProviderId)) {
 					return {
 						profile: null,
 					};
@@ -599,7 +619,7 @@ export function createClineProviderService() {
 			}
 
 			const normalizedProviderId = selectedSettings.provider.trim().toLowerCase();
-			if (normalizedProviderId !== "cline") {
+			if (!isClineAccountProviderId(normalizedProviderId)) {
 				throw new Error("Featurebase token requires a Cline provider.");
 			}
 
@@ -634,7 +654,7 @@ export function createClineProviderService() {
 					return { balance: null, activeAccountLabel: null, activeOrganizationId: null };
 				}
 				const normalizedProviderId = selectedSettings.provider.trim().toLowerCase();
-				if (normalizedProviderId !== "cline") {
+				if (!isClineAccountProviderId(normalizedProviderId)) {
 					return { balance: null, activeAccountLabel: null, activeOrganizationId: null };
 				}
 
@@ -697,7 +717,7 @@ export function createClineProviderService() {
 					return { organizations: [] };
 				}
 				const normalizedProviderId = selectedSettings.provider.trim().toLowerCase();
-				if (normalizedProviderId !== "cline") {
+				if (!isClineAccountProviderId(normalizedProviderId)) {
 					return { organizations: [] };
 				}
 
@@ -748,7 +768,7 @@ export function createClineProviderService() {
 					return { ok: false, error: "No provider settings configured." };
 				}
 				const normalizedProviderId = selectedSettings.provider.trim().toLowerCase();
-				if (normalizedProviderId !== "cline") {
+				if (!isClineAccountProviderId(normalizedProviderId)) {
 					return { ok: false, error: "Account switching requires a Cline provider." };
 				}
 
