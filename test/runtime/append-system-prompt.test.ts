@@ -195,4 +195,17 @@ describe("resolveHomeAgentAppendSystemPrompt", () => {
 		expect(prompt).toContain("Pi MCP extension");
 		expect(prompt).toContain("/login");
 	});
+
+	it("returns active-agent guidance for cline-cli home sidebar sessions", () => {
+		const prompt = resolveHomeAgentAppendSystemPrompt("__home_agent__:workspace-1:cline-cli", {
+			currentVersion: "0.1.10",
+			cwd: "/Users/example/repo",
+			execPath: "/usr/local/bin/node",
+			execArgv: [],
+			argv: ["node", "/Users/example/repo/dist/cli.js"],
+			resolveRealPath: (path) => path,
+		});
+		expect(prompt).toContain("Current home agent: `cline-cli`");
+		expect(prompt).toContain("cline mcp install linear --transport http https://mcp.linear.app/mcp");
+	});
 });

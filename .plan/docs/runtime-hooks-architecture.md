@@ -23,6 +23,7 @@ This doc covers the runtime terminal agents:
 5. Droid
 6. Kiro
 7. Grok Build
+8. Cline CLI
 
 It does not cover adding new agents in detail.
 
@@ -100,6 +101,9 @@ Generated files by agent:
 5. Grok Build
    1. `<worktree>/.grok/hooks/kanban.json`
    2. Launch with `--trust` so the fresh worktree is trusted for project hooks.
+6. Cline CLI
+   1. `<worktree>/.cline/hooks/<HookName>` executable scripts (`.ps1` on Windows), discovered by the CLI per workspace.
+   2. Home-agent sessions also write `<workspace>/.cline/rules/kanban-home-agent.md` because `-s/--system` would replace the whole system prompt instead of appending.
 
 Generated hook files are written through idempotent text writes. Files only update when content changes.
 
