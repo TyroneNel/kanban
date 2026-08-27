@@ -20,6 +20,9 @@ This doc covers the runtime terminal agents:
 2. Codex
 3. Gemini
 4. OpenCode
+5. Droid
+6. Kiro
+7. Cline CLI
 
 It does not cover adding new agents in detail.
 
@@ -94,6 +97,9 @@ Generated files by agent:
 4. Codex
    1. No persistent wrapper script file is generated now.
    2. Codex uses `kanban hooks codex-wrapper` as the wrapper command.
+5. Cline CLI
+   1. `<worktree>/.cline/hooks/<HookName>` executable scripts (`.ps1` on Windows), discovered by the CLI per workspace.
+   2. Home-agent sessions also write `<workspace>/.cline/rules/kanban-home-agent.md` because `-s/--system` would replace the whole system prompt instead of appending.
 
 Generated hook files are written through idempotent text writes. Files only update when content changes.
 

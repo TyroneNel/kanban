@@ -225,6 +225,15 @@ They are distinct from Cline SDK plugin runtime hooks such as `beforeRun`,
   - `PreToolUse` for active tools like `Read`, `Grep`, `Glob`, `FetchUrl`, `WebSearch`, `Execute`, `Task`, `Edit`, and `Create` emits `to_in_progress`
   - `PreToolUse` for `AskUser` and `Stop` emit `to_review`
   - `PostToolUse` for `AskUser` and `UserPromptSubmit` emit `to_in_progress`
+- Cline CLI
+  - Project hooks live at `<worktree>/.cline/hooks/<HookName>` (`TaskStart`, `TaskResume`, `TaskCancel`, `TaskComplete`, `TaskError`, `PreToolUse`, `PostToolUse`, `UserPromptSubmit`); the CLI auto-discovers them per workspace
+  - `TaskStart`, `TaskResume`, and `UserPromptSubmit` emit `to_in_progress`
+  - `PreToolUse` emits `activity`, plus `to_review` for user-question tools (`ask_followup_question`, `ask_question`, `plan_mode_respond`, `submit_and_exit`) and `to_in_progress` otherwise
+  - `PostToolUse` emits `activity`, plus `to_in_progress` for user-question tools
+  - `TaskComplete`, `TaskError`, and `TaskCancel` emit `to_review`
+  - Never pass `--yolo`: yolo mode disables the CLI's hook dispatch entirely
+  - `--hooks-dir` only sets `CLINE_HOOKS_DIR`, which current CLI builds never read; do not rely on it
+  - Kanban scripts carry a `# kanban-managed: cline-cli hook` marker and never overwrite user-owned hook files
 
 Important behavior details:
 
