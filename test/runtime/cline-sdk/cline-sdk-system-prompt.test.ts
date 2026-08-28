@@ -24,11 +24,15 @@ vi.mock("../../../src/cline-sdk/cline-telemetry-service", () => ({
 	getCliTelemetryService: vi.fn(),
 }));
 
-import { resolveClineSdkSystemPrompt } from "../../../src/cline-sdk/sdk-runtime-boundary";
+import {
+	clearWorkspaceMetadataCache,
+	resolveClineSdkSystemPrompt,
+} from "../../../src/cline-sdk/sdk-runtime-boundary";
 
 describe("resolveClineSdkSystemPrompt", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		clearWorkspaceMetadataCache();
 		sdkMocks.buildWorkspaceMetadata.mockResolvedValue("ws-meta:/tmp/worktree");
 	});
 
