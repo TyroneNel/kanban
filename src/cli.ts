@@ -797,6 +797,15 @@ async function run(): Promise<void> {
 	await program.parseAsync(argv, { from: "user" });
 	if (!shouldAutoOpenBrowserTabForInvocation(argv)) {
 		await Promise.allSettled([disposeCliTelemetryService(), flushNodeTelemetry()]);
+		// process.stdout is asynchronous when it points at a pipe. Calling
+		// process.exit() before the write queue drains truncates the output at
+		// the pipe buffer size (64 KiB on Linux). Wait for stdout to flush so
+		// JSON commands stay complete when piped. See #623.
+		if (process.stdout.writableLength > 0) {
+			await new Promise<void>((resolve) => {
+				process.stdout.write("", resolve);
+			});
+		}
 		process.exit(process.exitCode ?? 0);
 	}
 }
